@@ -35,10 +35,22 @@ yy、zz照此办理
     + 默认电机质量0.055kg（MT2212 motor）
     + $m_{body}=mass-4*m_{rotor}=0.78kg$
     + 机身中心盒尺寸x=0.18m, y=0.11m, z=0.04m（中心在质心0,0,0处）
-在/media/zheng/A214861F1485F697/Airsim/AirLib/include/vehicles/multirotor/MultiRotorPhysicsBody.hpp内：
-+ 无人机桨叶投影面积：propeller_area = M_PIf * params.rotor_params.propeller_diameter ^ 2
-  + 这里是 直径 * 直径 而非 (直径/2)^2，可能是简化的有效面积计算。
-+ 螺旋桨侧面（横截面）面积: propeller_xsection = M_PIf * params.rotor_params.propeller_diameter * params.rotor_params.propeller_height
+在/media/zheng/A214861F1485F697/Airsim/AirLib/include/vehicles/multirotor/RotorParams.hpp内：
++ 逆时针旋转RotorTurningDirectionCCW = -1 （AirSim坐标系z向下，右手定则）
++ 顺时针旋转RotorTurningDirectionCW = 1
++ 推力系数C_T = 0.109919
++ 扭矩系数 C_P = 0.040164
++ 空气密度air_density = 1.225kg/m^3
++ 最大转速max_rpm = 6396.667RPM
++ 螺旋桨直径propeller_diameter = 0.2286m
++ 螺旋桨高度propeller_height = 0.01m
++ 控制信号低通滤波器时间常数 control_signal_filter_tc = 0.005s
++ 每秒最大转数revolutions_per_second = max_rpm/60
++ 最大角速度max_speed = revolutions_per_second * 2 * M_PIf
++ 最大推力max_thrust = 4.179446268N 根据上述值计算
++ 最大力矩max_torque = 0.055562N·m
+  $$\text{max\_thrust} = C_T \cdot \text{air\_density} \cdot n^2 \left(\text{propeller\_diameter}\right)^4$$
+  $$\text{max\_torque} = \frac{C_P \cdot \text{air\_density} \cdot n^2 \left(\text{propeller\_diameter}\right)^5}{2 \cdot {\pi}}$$
 
 
 ## simpleflight的控制逻辑（by Gemini）
@@ -84,11 +96,16 @@ SimpleFlight 的**核心思想**是将控制指令转化为旋翼的推力与反
 + RotorActuator.hpp (update(), setOutput(), setWrench() 方法):
   + updateEnvironmentalFactors(): 计算当前空气密度与海平面空气密度的比值 air_density_ratio_。
   + setOutput(output_, params_, control_signal_filter_, turning_direction_): 这是核心计算发生的地方。
-    + output.control_signal_filtered = control_signal_filter_.getOutput();: 获取滤波后的控制信号。
-    + output.speed = sqrt(output.control_signal_filtered * params.max_speed_square);: 计算旋翼转速（角速度）。
-    + output.thrust = output.control_signal_filtered * params.max_thrust;: 计算旋翼产生的推力。
+    + output.control_signal_filtered = control_signal_filter_.getOutput(): 获取滤波后的控制信号。
+    + output.speed = sqrt(output.control_signal_filtered * params.max_speed_square): 计算旋翼转速（角速度）。
+      + 推力与转速的平方成正比，而推力通常与控制信号近似成线性关系。
+    + output.thrust = output.control_signal_filtered * params.max_thrust: 计算旋翼产生的推力。
     + output.torque_scaler = output.control_signal_filtered * params.max_torque * static_cast<int>(turning_direction);: 计算旋翼产生的反扭矩。
   + setWrench(Wrench& wrench): 将计算出的推力和扭矩施加到 PhysicsBody 的总 wrench_ 上。
+    + wrench.force = normal * output_.thrust * air_density_ratio_
+      + 推力向量的方向由 normal 决定（通常是向上），大小与当前空气密度成正比。
+    + wrench.torque = normal * output_.torque_scaler * air_density_ratio_
+      + 反扭矩的方向也沿着 normal 向量（即旋翼的旋转轴），大小同样与空气密度成正比。
 + RotorParams.hpp (RotorParams 结构体):
   + 提供了计算推力 (C_T, max_thrust) 和扭矩 (C_P, max_torque) 所需的系数和最大值。
   + max_thrust 和 max_torque 是在 calculateMaxThrust() 中根据 C_T, C_P, air_density, max_rpm, propeller_diameter 预先计算好的。
@@ -115,7 +132,7 @@ $$\text{air\_density\_ratio} = \frac{\text{current\_air\_density}}{\text{sea\_le
 **涉及文件：**
 
 + PhysicsBody.hpp (update() 方法):
-  + wrench_ = Wrench::zero();: 在每次更新前清零总力矩。
+  + wrench_ = Wrench::zero(): 在每次更新前清零总力矩。
   + for (...) { getWrenchVertex(vertex_index).update(); }: 每个 RotorActuator 和 DragVertex 的 update() 方法会调用它们的 setWrench()，这些力/力矩会累加到 PhysicsBody 的 wrench_ 成员中。
 + MultiRotorPhysicsBody.hpp (createDragVertices() 方法):
   + 定义了用于计算空气阻力的 drag_faces_。
@@ -133,6 +150,15 @@ $$\text{air\_density\_ratio} = \frac{\text{current\_air\_density}}{\text{sea\_le
 + 角阻力: Tau_drag = -angular_drag_coefficient * Angular_Velocity (简化模型)
 + 总合力: F_total = sum(all forces from rotors and drag)
 + 总合力矩: Tau_total = sum(all torques from rotors and drag)
++ 无人机桨叶投影面积：propeller_area = M_PIf * params.rotor_params.propeller_diameter ^ 2
+  + 这里是 直径 * 直径 而非 (直径/2)^2，可能是简化的有效面积计算。
++ 螺旋桨侧面（横截面）面积: propeller_xsection = M_PIf * params.rotor_params.propeller_diameter * params.rotor_params.propeller_height
+  + 不知道为啥是直径\*pi\*高，阻力面积应该没有pi
++ “机身盒”上下面积：top_bottom_area = params.body_box.x * params.body_box.y;
++ “机身盒”左右面积：left_right_area = params.body_box.x * params.body_box.z;
++ “机身盒”前后面积： front_back_area = params.body_box.y * params.body_box.z;
++ 三轴方向上阻力因数：drag_factor_unit = \[front_back_area + rotors_.size() * propeller_xsection, left_right_area + rotors_.size() * propeller_xsection, top_bottom_area + rotors_.size() * propeller_area\] * params.linear_drag_coefficient / 2;
+  + 空气线阻力$$F_{\text{drag}} = \text{DragFactor} \cdot V^2$$其中$$\text{DragFactor} = 0.5 \cdot \rho \cdot A \cdot C_d$$实际上$$\text{params.linear\_drag\_coefficient} = \rho \cdot C_d$$
 ### 阶段 4: 运动学状态更新
 
 **目标：**根据总合力、总合力矩、无人机质量和惯性，更新无人机的位置、姿态、线速度和角速度。
@@ -146,15 +172,18 @@ $$\text{air\_density\_ratio} = \frac{\text{current\_air\_density}}{\text{sea\_le
   + 定义了无人机的状态：位置 (Pose), 速度 (Twist), 加速度 (Acceleration), 惯性 (Inertia).
 + FastPhysicsEngine.hpp / FastPhysicsEngine.cpp (隐式):
   + 这是 SimpleFlight 实际执行牛顿-欧拉方程积分的物理求解器。它会从 PhysicsBody 获取 mass_, inertia_ 和 wrench_，然后计算加速度，并更新 kinematics_ 对象。
+  + static Wrench getBodyWrench(...)：累加每个wrench（顶点）产生的力偶（力force和力矩torque），force转移到世界坐标系下，torque留在机体坐标系下
+  + 
 
 **关键公式 (牛顿-欧拉方程，在物理求解器中实现)：**
 
-+ 线加速度: a = F_total / mass
-+ 角加速度: alpha = Inertia_inv * (Tau_total - (angular_velocity × (Inertia * angular_velocity)))
++ 线加速度: a = F_total / mass + gravity
++ 角加速度: alpha = Inertia_inv * (Tau_total - (avg_angular_angular_velocity × (Inertia * angular_velocity)))
   + Inertia_inv: 惯性张量的逆。
   + 引入了 (angular_velocity × (Inertia * angular_velocity)) 这一项，用于解释和补偿由于刚体自身旋转导致角动量方向变化而产生的惯性力矩。
   + 其中×为叉乘
-+ 线速度更新: V_new = V_old + a * dt
-+ 角速度更新: omega_new = omega_old + alpha * dt
++ 线速度更新: V_new = V_old + 0.5 * (a_t+a_t+1) * dt Verlet积分，比直接a_t乘dt稳定一些
++ 角速度更新: omega_new = omega_old + 0.5 * (alpha_t+alpha_t+1) * dt
 + 位置更新: P_new = P_old + V_new * dt
 + 姿态更新: Q_new = Q_old * exp(0.5 * omega_new * dt) (使用四元数进行积分)
++ 力矩torque_i(𝜏)=𝑟×𝐹
