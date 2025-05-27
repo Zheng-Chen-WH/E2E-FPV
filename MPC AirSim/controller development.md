@@ -35,6 +35,7 @@ yy、zz照此办理
     + 默认电机质量0.055kg（MT2212 motor）
     + $m_{body}=mass-4*m_{rotor}=0.78kg$
     + 机身中心盒尺寸x=0.18m, y=0.11m, z=0.04m（中心在质心0,0,0处）
+
 在/media/zheng/A214861F1485F697/Airsim/AirLib/include/vehicles/multirotor/RotorParams.hpp内：
 + 逆时针旋转RotorTurningDirectionCCW = -1 （AirSim坐标系z向下，右手定则）
 + 顺时针旋转RotorTurningDirectionCW = 1

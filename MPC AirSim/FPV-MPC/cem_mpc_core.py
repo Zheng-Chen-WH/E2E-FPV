@@ -4,6 +4,7 @@ import time
 import math
 from nn_utils import train_nn_model, save_model_and_buffer
 import config as cfg
+from analytical_model import SimpleFlightDynamics
 
 """ 将参数从 config.py传递到 main.py，再由 main.py 传递给 mpc_core.py
     这种方式通常被称为**依赖注入（Dependency Injection）**的一种形式
