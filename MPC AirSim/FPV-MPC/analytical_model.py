@@ -165,7 +165,7 @@ class SimpleFlightDynamics:
         total_thrust_vector_b = np.array([0, 0, -np.sum(thrusts_mag)]) # 总推力在NED系下
         L_eff = self.params['arm_length'] * np.cos(np.pi / 4)
 
-        tau_x_b = L_eff * (T_FR + T_RR - T_FL - T_RL ) # 推力对三轴产生的力矩
+        tau_x_b = L_eff * (T_FL + T_RL - T_FR - T_RR) # 推力对三轴产生的力矩
         tau_y_b = L_eff * (T_FR + T_FL - T_RL - T_RR)
         tau_z_b = np.sum(rotor_yaw_torques_b)
         torques_actuators_b = np.array([tau_x_b, tau_y_b, tau_z_b]) # 电机在本体系下产生力矩

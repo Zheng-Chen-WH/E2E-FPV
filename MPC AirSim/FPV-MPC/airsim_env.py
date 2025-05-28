@@ -192,11 +192,11 @@ class AirSimEnv:
         #     duration= 2 * self.DT # duration改到2*DT
         # )
         # 发送油门指令测试
-        self.client.moveByMotorPWMsAsync(0.701,0.702,0.7,0.702, self.DT*2)
+        self.client.moveByMotorPWMsAsync(0.701,0.702,0.702,0.7, self.DT*2)
         start_time=time.time()
         state = self.get_drone_state()
         drone=SimpleFlightDynamics(state[0:3],state[3:6],state[6:10],state[10:13])
-        pos,vel,att,angular_vel=drone.simulate_duration([0.701,0.702,0.7,0.702], self.DT)
+        pos,vel,att,angular_vel=drone.simulate_duration([0.701,0.702,0.702,0.7], self.DT)
         print(f"解析模型位置, {pos},速度,{vel},姿态四元数{att},角速度{angular_vel}")
         end_time=time.time()
         time.sleep(self.DT-(end_time-start_time)) # 仿真持续步长
