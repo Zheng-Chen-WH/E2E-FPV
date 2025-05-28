@@ -14,15 +14,15 @@ def main():
 
     # 初始化
     airsim_environment = AirSimEnv(cfg)
-    
+
     dynamics_model_nn = DynamicsNN(cfg.STATE_DIM, cfg.ACTION_DIM, cfg.NN_HIDDEN_SIZE).to(cfg.device)
     optimizer_nn = optim.Adam(dynamics_model_nn.parameters(), lr=cfg.LEARNING_RATE)
     
     # 选择是否加载老模型
-    LOAD_EXISTING_MODEL = True # 是否加载
+    LOAD_EXISTING_MODEL = False # 是否加载
     MODEL_BASE_FILENAME = "master"
 
-    
+
     if LOAD_EXISTING_MODEL:
         cfg.EPISODE_EXPLORE=0
         print(f"Attempting to load model and data from base: {MODEL_BASE_FILENAME}...")

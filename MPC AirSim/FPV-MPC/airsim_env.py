@@ -4,6 +4,7 @@ from datetime import datetime
 import time
 import math
 import config as cfg
+from analytical_model import SimpleFlightDynamics
 
 class AirSimEnv:
     def __init__(self, cfg): # 门框的名称（确保与UE4中的名称一致）
@@ -24,7 +25,7 @@ class AirSimEnv:
         self.start_time = 0 # To be set at the beginning of each episode
 
     def _move_door(self, door_frame_name, position): 
-        """将门移动到指定x,y,z位置的辅助函数, 保持初始姿态，名字前加_使其只能在类内部被调用"""
+        """将门移动到指定x,y,z位置的辅助函数, 保持初始姿态, 名字前加_使其只能在类内部被调用"""
         if self.initial_pose is None: # 如果没有被设定，则按照第一个门的姿态设定
             self.initial_pose = self.client.simGetObjectPose(door_frame_name)
 
@@ -61,8 +62,10 @@ class AirSimEnv:
 
         # 获取姿态角 (俯仰pitch, 滚转roll, 偏航yaw, 欧拉角表示, 弧度制)
         orientation_q = fpv_state_raw.kinematics_estimated.orientation
-        pitch, roll, yaw = airsim.to_eularian_angles(orientation_q) # # 将四元数转换为欧拉角 (radians)
-        fpv_attitude = np.array([pitch, roll, yaw])
+        fpv_attitude = np.array([orientation_q.x_val, orientation_q.y_val, orientation_q.z_val, orientation_q.w_val]) # 四元数表示
+        # pitch, roll, yaw = airsim.to_eularian_angles(orientation_q) # # 将四元数转换为欧拉角 (radians)
+        # fpv_attitude = np.array([pitch, roll, yaw])
+        
         # roll_deg = math.degrees(roll)
         # pitch_deg = math.degrees(pitch)
         # yaw_deg = math.degrees(yaw)
@@ -182,19 +185,28 @@ class AirSimEnv:
 
     def step(self, control_action_xyz_velocity):
         # 发送速度指令
-        self.client.moveByVelocityAsync(
-            float(control_action_xyz_velocity[0]),
-            float(control_action_xyz_velocity[1]),
-            float(control_action_xyz_velocity[2]),
-            duration= 2 * self.DT # duration改到2*DT
-        )
-        
-        time.sleep(self.DT) # 仿真持续步长
+        # self.client.moveByVelocityAsync(
+        #     float(control_action_xyz_velocity[0]),
+        #     float(control_action_xyz_velocity[1]),
+        #     float(control_action_xyz_velocity[2]),
+        #     duration= 2 * self.DT # duration改到2*DT
+        # )
+        # 发送油门指令测试
+        self.client.moveByMotorPWMsAsync(0.701,0.702,0.7,0.702, self.DT*2)
+        start_time=time.time()
+        state = self.get_drone_state()
+        drone=SimpleFlightDynamics(state[0:3],state[3:6],state[6:10],state[10:13])
+        pos,vel,att,angular_vel=drone.simulate_duration([0.701,0.702,0.7,0.702], self.DT)
+        print(f"解析模型位置, {pos},速度,{vel},姿态四元数{att},角速度{angular_vel}")
+        end_time=time.time()
+        time.sleep(self.DT-(end_time-start_time)) # 仿真持续步长
 
         elapsed_time = time.time() - self.start_time
         self._update_door_positions(elapsed_time) # 更新门位置
 
         current_drone_state = self.get_drone_state()
+        print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
+        print("————————————————————————————————————")
         collision_info = self.client.simGetCollisionInfo()
         
         collided = False

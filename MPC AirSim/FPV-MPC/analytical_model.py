@@ -47,10 +47,9 @@ class SimpleFlightDynamics:
         self.gravity_w = np.array([0, 0, 9.81])  # NED世界坐标系
 
         # 状态变量
-        quat_converted = initial_orientation_quat[[1, 2, 3, 0]] # R.from_quat需要[x,y,z,w]格式的四元数，airsim输出的是[w,x,y,z]格式
         self.position_w = np.array(initial_position, dtype=float) 
         self.velocity_w = np.array(initial_velocity, dtype=float)
-        self.orientation_q_bw = R.from_quat(quat_converted) # 创建一个从本体系转到世界系的“旋转对象”
+        self.orientation_q_bw = R.from_quat(initial_orientation_quat) # 创建一个从本体系转到世界系的“旋转对象”;R.from_quat需要[x,y,z,w]格式的四元数，airsim输出的正是
         self.angular_velocity_b = np.array(initial_angular_velocity, dtype=float)
 
         self.params = self._get_quadx_params()
@@ -62,6 +61,7 @@ class SimpleFlightDynamics:
         self.inertia_b = np.diag(self.params['inertia_diag']) # 转动惯量对角阵
         self.inertia_inv_b = np.linalg.inv(self.inertia_b) # 转动惯量求逆
         self.linear_drag_coeff = self.params['linear_drag_coefficient']
+        self.drag_box = 0.5 * self.linear_drag_coeff * np.array([self.params['yz_area'], self.params['xz_area'], self.params['xy_area']])
         self.angular_drag_coeff_b = self.params['angular_drag_coefficient']
 
         # 电机X型配置, FRD本体系: X向前, Y向右, Z向下)
@@ -97,7 +97,7 @@ class SimpleFlightDynamics:
         body_cg_mass = params['mass'] * body_mass_fraction
         motor_assembly_mass_total = params['mass'] * (1-body_mass_fraction)
         motor_mass = motor_assembly_mass_total / 4.0 # 电机质量
-
+ 
         dim_x = 0.180; dim_y = 0.110; dim_z = 0.040 # 机身盒尺寸
 
         Ixx_body = body_cg_mass / 12.0 * (dim_y**2 + dim_z**2) # 机身对三个轴的转动惯量
@@ -118,11 +118,12 @@ class SimpleFlightDynamics:
         ])
 
         params['linear_drag_coefficient'] = 0.325 # 线阻力系数
-        params['angular_drag_coefficient'] = 0.325 # 角阻力系数
+        params['angular_drag_coefficient'] = 0.0 # 角阻力系数；0.325的时候每个DT都会导致最后变成推力矩与阻力矩平衡，无人机y方向角速度锁定在0.02
 
         params['rotor_params'] = { # 电机参数与空气密度
             'C_T': 0.109919, 'C_P': 0.040164, 'air_density': 1.225,
             'max_rpm': 6396.667, 'propeller_diameter': 0.2286,
+            'propeller_height':0.01,
             'control_signal_filter_tc': 0.005,
             'max_thrust':4.179446268,
             'max_torque':0.055562
@@ -131,6 +132,9 @@ class SimpleFlightDynamics:
         params['rotor_params']['revolutions_per_second'] = params['rotor_params']['max_rpm'] / 60.0
         params['rotor_params']['max_speed_rad_s'] = params['rotor_params']['revolutions_per_second'] * 2 * np.pi
         params['rotor_params']['max_speed_sq'] = params['rotor_params']['max_speed_rad_s']**2
+        params['xy_area'] = dim_x * dim_y + 4.0 * np.pi * params['rotor_params']['propeller_diameter']**2
+        params['yz_area'] = dim_y * dim_z + 4.0 * np.pi * params['rotor_params']['propeller_diameter'] * params['rotor_params']['propeller_height']
+        params['xz_area'] = dim_x * dim_z + 4.0 * np.pi * params['rotor_params']['propeller_diameter'] * params['rotor_params']['propeller_height']
         
         return params
 
@@ -141,7 +145,7 @@ class SimpleFlightDynamics:
         rp['max_thrust'] = rp['C_T'] * rho * (n_rps**2) * (D**4)
         rp['max_torque'] = rp['C_P'] * rho * (n_rps**2) * (D**5) / (2 * np.pi)
 
-    def simulate_step(self, motor_pwms):
+    def simulate_step(self, motor_pwms, ):
         rp = self.params['rotor_params'] # 电机参数
         air_density_ratio = 1.0 # 基本不用考虑空气密度变化
         thrusts_mag = np.zeros(4) # 推力大小
@@ -166,19 +170,28 @@ class SimpleFlightDynamics:
         tau_z_b = np.sum(rotor_yaw_torques_b)
         torques_actuators_b = np.array([tau_x_b, tau_y_b, tau_z_b]) # 电机在本体系下产生力矩
 
-        force_drag_w = -self.linear_drag_coeff * self.velocity_w # 世界系下简化空气阻力
-        force_drag_b = self.orientation_q_bw.inv().apply(force_drag_w) # 姿态转换求逆就是w→b，空气阻力转到本体系
+        # 线性阻力，速度高的时候误差严重，换成drag_box模式；角速度反正系数已经为0了爱咋咋
+        # force_drag_w = -self.linear_drag_coeff * self.velocity_w * np.abs(self.velocity_w) # 世界系下简化空气阻力
+        # force_drag_b = self.orientation_q_bw.inv().apply(force_drag_w) # 姿态转换求逆就是w→b，空气阻力转到本体系
         torque_drag_b = -self.angular_drag_coeff_b * self.angular_velocity_b # 旋转阻力
+        
+        # drag_box方式计算阻力
+        velocity_b = self.orientation_q_bw.inv().apply(self.velocity_w)
+        force_drag_b = - self.drag_box * np.abs(velocity_b) * velocity_b
 
         total_force_b = total_thrust_vector_b + force_drag_b # 本体系下合力
         total_torque_b = torques_actuators_b + torque_drag_b # 本体系下合力矩
+        # print("torque_drag_b", torque_drag_b)
+        # print("total_torque_b", total_torque_b)
 
         total_force_w = self.orientation_q_bw.apply(total_force_b) # 合力转到世界系
         linear_accel_w = total_force_w / self.mass + self.gravity_w # 世界系下加速度
 
         inertia_omega_b = self.inertia_b @ self.angular_velocity_b # 本体系下角动量
+        # print("inertia_omega_b", inertia_omega_b)
         cross_product_term = np.cross(self.angular_velocity_b, inertia_omega_b) # 角速度叉乘角动量
         angular_accel_b = self.inertia_inv_b @ (total_torque_b - cross_product_term) # 本体系角加速度
+        # print("angular_accel_b", angular_accel_b)
         
         self.position_w += (self.velocity_w + linear_accel_w * self.dt/2) * self.dt # 中点法计算位置
         self.velocity_w += linear_accel_w * self.dt # 前向欧拉积分，没用到verlet
@@ -201,68 +214,62 @@ class SimpleFlightDynamics:
         return self.get_current_state()
 
     def get_current_state(self):
-        ypr_rad = self.orientation_q_bw.as_euler('zyx', degrees=False) # zyx的顺序转化为欧拉角
-        euler_angles_deg = np.rad2deg([ypr_rad[2], ypr_rad[1], ypr_rad[0]])
-        return {
-            "position_w": self.position_w.tolist(),
-            "velocity_w": self.velocity_w.tolist(),
-            "orientation_euler_deg": euler_angles_deg.tolist(),
-            "orientation_quat_xyzw_bw": self.orientation_q_bw.as_quat().tolist(),
-            "angular_velocity_b": self.angular_velocity_b.tolist()
-        }
+        # ypr_rad = self.orientation_q_bw.as_euler('zyx', degrees=False) # zyx的顺序转化为欧拉角
+        # euler_angles_deg = np.rad2deg([ypr_rad[2], ypr_rad[1], ypr_rad[0]])
+        return self.position_w, self.velocity_w, self.orientation_q_bw.as_quat(), self.angular_velocity_b
 
 # --- Example Usage ---
-if __name__ == '__main__':
-    initial_pos_ned = np.array([0.0, 0.0, 0.0])
-    initial_vel_ned = np.array([0.0, 0.0, 0.0])
-    initial_orient_quat_frd_to_ned = np.array([0.0, 0.0, 0.0, 1.0])
-    initial_ang_vel_frd = np.array([0.0, 0.0, 0.0])
+# if __name__ == '__main__':
+#     initial_pos_ned = np.array([0.0, 0.0, 0.0])
+#     initial_vel_ned = np.array([0.0, 0.0, 0.0])
+#     initial_orient_quat_frd_to_ned = np.array([0.0, 0.0, 0.0, 1.0])
+#     initial_ang_vel_frd = np.array([0.0, 0.0, 0.0])
 
-    drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd)
-    print("Initial State (NED world, FRD body):"); print(drone.get_current_state())
+#     drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd)
+#     print("Initial State (NED world, FRD body):"); print(drone.get_current_state())
 
-    # Max thrust per motor from default params ~4.179 N
-    # Hover PWM ~0.587
-    hover_pwm = 0.587
-    pwm_offset = 0.1 # For maneuvers
+#     # Max thrust per motor from default params ~4.179 N
+#     # Hover PWM ~0.587
+#     hover_pwm = 0.587
+#     pwm_offset = 0.1 # For maneuvers
 
-    # --- Takeoff Example ---
-    print(f"\nSimulating TAKEOFF...")
-    takeoff_pwm = 0.65
-    final_state_takeoff = drone.simulate_duration((takeoff_pwm, takeoff_pwm, takeoff_pwm, takeoff_pwm), 2.0)
-    print("\nFinal State after takeoff simulation:"); print(final_state_takeoff)
-
-
-    # --- Roll Right Example ---
-    # tau_x_b = L_eff * (T_FL + T_RL - T_FR - T_RR) -> For positive roll (right), FL,RL > FR,RR
-    # Motor order: (FR, RL, FL, RR) -> (low, high, high, low)
-    drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
-    print("\nSimulating a ROLL RIGHT command...")
-    roll_commands = (hover_pwm - pwm_offset, hover_pwm + pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset)
-    roll_commands = tuple(np.clip(c, 0.0, 1.0) for c in roll_commands)
-    final_state_roll = drone.simulate_duration(roll_commands, 0.5)
-    print("\nFinal State after roll command:"); print(final_state_roll)
+#     # --- Takeoff Example ---
+#     print(f"\nSimulating TAKEOFF...")
+#     takeoff_pwm = 0.65
+#     final_state_takeoff = drone.simulate_duration((takeoff_pwm, takeoff_pwm, takeoff_pwm, takeoff_pwm), 2.0)
+#     print("\nFinal State after takeoff simulation:"); print(final_state_takeoff)
 
 
-    # --- Pitch Up Example ---
-    # tau_y_b = L_eff * (T_FR + T_FL - T_RL - T_RR) -> For positive pitch (up), FR,FL > RL,RR
-    # Motor order: (FR, RL, FL, RR) -> (high, low, high, low)
-    drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
-    print("\nSimulating a PITCH UP command...")
-    pitch_commands = (hover_pwm + pwm_offset, hover_pwm - pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset)
-    pitch_commands = tuple(np.clip(c, 0.0, 1.0) for c in pitch_commands)
-    final_state_pitch = drone.simulate_duration(pitch_commands, 0.5)
-    print("\nFinal State after pitch up command:"); print(final_state_pitch)
+#     # --- Roll Right Example ---
+#     # tau_x_b = L_eff * (T_FL + T_RL - T_FR - T_RR) -> For positive roll (right), FL,RL > FR,RR
+#     # Motor order: (FR, RL, FL, RR) -> (low, high, high, low)
+#     drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
+#     print("\nSimulating a ROLL RIGHT command...")
+#     roll_commands = (hover_pwm - pwm_offset, hover_pwm + pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset)
+#     roll_commands = tuple(np.clip(c, 0.0, 1.0) for c in roll_commands)
+#     final_state_roll = drone.simulate_duration(roll_commands, 0.5)
+#     print("\nFinal State after roll command:"); print(final_state_roll)
 
 
-    # --- Yaw Right Example (Corrected for new motor directions) ---
-    # rotor_turning_directions = [1, 1, -1, -1] for (FR, RL, FL, RR)
-    # tau_z_b = Torque_FR(cs_FR*1) + Torque_RL(cs_RL*1) + Torque_FL(cs_FL*-1) + Torque_RR(cs_RR*-1)
-    # For positive yaw (right): Increase cs_FR, cs_RL; Decrease cs_FL, cs_RR
-    # Motor order: (FR, RL, FL, RR) -> (high, high, low, low)
-    drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
-    print("\nSimulating a YAW RIGHT command...")
-    yaw_commands = (hover_pwm + pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset, hover_pwm - pwm_offset)
-    yaw_commands = tuple(np.clip(c, 0.0, 1.0) for c in yaw_commands)
-    final_state_yaw = drone.simulate_duration(yaw_commands, 0.5)
-    print("\nFinal State after yaw right command:"); print(final_state_yaw)
+#     # --- Pitch Up Example ---
+#     # tau_y_b = L_eff * (T_FR + T_FL - T_RL - T_RR) -> For positive pitch (up), FR,FL > RL,RR
+#     # Motor order: (FR, RL, FL, RR) -> (high, low, high, low)
+#     drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
+#     print("\nSimulating a PITCH UP command...")
+#     pitch_commands = (hover_pwm + pwm_offset, hover_pwm - pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset)
+#     pitch_commands = tuple(np.clip(c, 0.0, 1.0) for c in pitch_commands)
+#     final_state_pitch = drone.simulate_duration(pitch_commands, 0.5)
+#     print("\nFinal State after pitch up command:"); print(final_state_pitch)
+
+
+#     # --- Yaw Right Example (Corrected for new motor directions) ---
+#     # rotor_turning_directions = [1, 1, -1, -1] for (FR, RL, FL, RR)
+#     # tau_z_b = Torque_FR(cs_FR*1) + Torque_RL(cs_RL*1) + Torque_FL(cs_FL*-1) + Torque_RR(cs_RR*-1)
+#     # For positive yaw (right): Increase cs_FR, cs_RL; Decrease cs_FL, cs_RR
+#     # Motor order: (FR, RL, FL, RR) -> (high, high, low, low)
+#     drone = SimpleFlightDynamics(initial_pos_ned, initial_vel_ned, initial_orient_quat_frd_to_ned, initial_ang_vel_frd) # Reset
+#     print("\nSimulating a YAW RIGHT command...")
+#     yaw_commands = (hover_pwm + pwm_offset, hover_pwm + pwm_offset, hover_pwm - pwm_offset, hover_pwm - pwm_offset)
+#     yaw_commands = tuple(np.clip(c, 0.0, 1.0) for c in yaw_commands)
+#     final_state_yaw = drone.simulate_duration(yaw_commands, 0.5)
+#     print("\nFinal State after yaw right command:"); print(final_state_yaw)

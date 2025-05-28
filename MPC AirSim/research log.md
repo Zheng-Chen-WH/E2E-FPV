@@ -77,3 +77,13 @@
 **gemini提议的settings.json修改方式**：添加或修改 RotorParams 子部分："Vehicles": { "SimpleFlight": { "Params": { "RotorParams": { ... } } } }
 
 + 把airsim里的无人机ue4模型缩小到了50%（0.5*0.5m）的大小，在ue4中启动场景（否则没有无人机）然后/AirSim/Blueprints/BP_FlyingPawn 选择 components tab -> Transform -> scale；由于模型是生成的，所以要点进mesh界面更改缩放才能每次生成都是缩放后的大小
+
+## 5.26 5.27
++ 完成了动力学模型的开发，明天测试一下
+
+## 5.28
++ 模型存在较大误差，进行修正
+  + 角度方面误差：把旋转阻力系数改成0之后解决
+  + 线速度与位置方面误差：引入基于drag_face的阻力计算方法，具体为：
+    + 将阻力盒建模为一个正方体，x,y,z方向大小分别为机身盒与桨叶尺寸在相应方向的面积之和
+    + 根据姿态将阻力盒投影到世界坐标系下，利用公式 $F=C_d \cdot V^2$ 计算阻力，其中 $Cd=0.5 \cdot 0.325\cdot A$,A为对应方向面积,0.325为文档给出的阻力系数
