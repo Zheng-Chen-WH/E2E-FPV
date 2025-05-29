@@ -4,7 +4,6 @@ from datetime import datetime
 import time
 import math
 import config as cfg
-from analytical_model import SimpleFlightDynamics
 
 class AirSimEnv:
     def __init__(self, cfg): # 门框的名称（确保与UE4中的名称一致）
@@ -203,6 +202,7 @@ class AirSimEnv:
 
         elapsed_time = time.time() - self.start_time
         self._update_door_positions(elapsed_time) # 更新门位置
+        # self.client.simPause(True)
 
         current_drone_state = self.get_drone_state()
         print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
