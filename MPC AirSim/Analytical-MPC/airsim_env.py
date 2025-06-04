@@ -62,7 +62,7 @@ class AirSimEnv:
 
         # 获取姿态角 (俯仰pitch, 滚转roll, 偏航yaw, 欧拉角表示, 弧度制)
         orientation_q = fpv_state_raw.kinematics_estimated.orientation
-        fpv_attitude = np.array([orientation_q.x_val, orientation_q.y_val, orientation_q.z_val, orientation_q.w_val]) # 四元数表示
+        fpv_attitude = np.array([orientation_q.w_val, orientation_q.x_val, orientation_q.y_val, orientation_q.z_val]) # 四元数表示
         # pitch, roll, yaw = airsim.to_eularian_angles(orientation_q) # # 将四元数转换为欧拉角 (radians)
         # fpv_attitude = np.array([pitch, roll, yaw])
         
@@ -79,6 +79,7 @@ class AirSimEnv:
 
     def reset(self):
         # AirSim状态重置与初始化
+        self.client.simPause(False) # 解除暂停
         for attempt in range(10):
             # print(f"Attempting to reset and initialize drone (Attempt {attempt + 1}/{10})...")
             try:
@@ -153,11 +154,11 @@ class AirSimEnv:
 
         # 最终目标状态初始化
         self.final_target_state = np.array([
-            np.random.uniform(-5, 5),    # 目标位置x
-            np.random.uniform(38, 42),   # 目标位置y
-            np.random.uniform(-2, -1),   # 目标位置z
-            4.0, 0.0, 0.0,               # 目标速度x, y, z
-            0.0, 0.0, 0.0,               # 目标姿态pitch, roll, yaw
+            np.random.uniform(-1, 1),    # 目标位置x
+            np.random.uniform(48, 52),   # 目标位置y
+            np.random.uniform(-3, -2),   # 目标位置z
+            0.0, 0.0, 0.0,               # 目标速度x, y, z
+            0.707, 0.0, 0.0, 0.707,              # 目标姿态四元数
             0.0, 0.0, 0.0                # 目标角速度x, y, z
         ])
         self.waypoints_y.append(self.final_target_state[1])
@@ -178,12 +179,15 @@ class AirSimEnv:
         self.door_param["start_time"] = self.start_time
 
         current_drone_state = self.get_drone_state()
-        
+        self.start_time_step=time.time()
+
+        collision_info = self.client.simGetCollisionInfo()
+        self.first_collide_time=collision_info.time_stamp / 1e9
         return (current_drone_state, self.final_target_state, self.waypoints_y,
                 self.door_z_positions, np.array(self.door_current_x_positions), self.door_x_velocities,
                 self.start_time, self.door_param)
 
-    def step(self, control_action_xyz_velocity):
+    def step(self, control_signal):
         # 发送速度指令
         # self.client.moveByVelocityAsync(
         #     float(control_action_xyz_velocity[0]),
@@ -191,28 +195,25 @@ class AirSimEnv:
         #     float(control_action_xyz_velocity[2]),
         #     duration= 2 * self.DT # duration改到2*DT
         # )
-        # 发送油门指令测试
-        self.client.moveByMotorPWMsAsync(0.701,0.702,0.702,0.7, self.DT*2)
-        start_time=time.time()
-        state = self.get_drone_state()
-        drone=SimpleFlightDynamics(state[0:3],state[3:6],state[6:10],state[10:13])
-        pos,vel,att,angular_vel=drone.simulate_duration([0.701,0.702,0.702,0.7], self.DT)
-        print(f"解析模型位置, {pos},速度,{vel},姿态四元数{att},角速度{angular_vel}")
+        # 发送油门指令
         end_time=time.time()
-        time.sleep(self.DT-(end_time-start_time)) # 仿真持续步长
+        print("calculation time consumed:", end_time-self.start_time_step)
+        self.client.simPause(False)
+        self.client.moveByMotorPWMsAsync(float(control_signal[0]),float(control_signal[1]),float(control_signal[2]),float(control_signal[3]), self.DT*2)
+        time.sleep(self.DT) # 仿真持续步长
 
         elapsed_time = time.time() - self.start_time
         self._update_door_positions(elapsed_time) # 更新门位置
-        # self.client.simPause(True)
+        self.client.simPause(True)
+        self.start_time_step=time.time()
 
         current_drone_state = self.get_drone_state()
-        print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
-        print("————————————————————————————————————")
+        # print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
+        # print("————————————————————————————————————")
         collision_info = self.client.simGetCollisionInfo()
         
         collided = False
         # 碰撞时间需要大于一个小阈值，避免起飞碰撞被判定为碰撞
-        if collision_info.has_collided and (collision_info.time_stamp / 1e9 > self.start_time + 0.5) :
+        if collision_info.has_collided and (collision_info.time_stamp / 1e9 > self.first_collide_time + 0.5) :
             collided = True
-
         return current_drone_state, np.array(self.door_current_x_positions), self.door_x_velocities, collided

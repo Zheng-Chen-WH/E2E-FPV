@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import time
 import math
-from nn_utils import train_nn_model, save_model_and_buffer
 import config as cfg
 from airsim_env import AirSimEnv
 from analytical_model import SimpleFlightDynamics

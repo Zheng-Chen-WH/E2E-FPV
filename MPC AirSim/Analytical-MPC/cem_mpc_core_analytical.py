@@ -2,9 +2,8 @@ import numpy as np
 import torch
 import time
 import math
-from nn_utils import train_nn_model, save_model_and_buffer
 import config as cfg
-from analytical_model import SimpleFlightDynamics
+from analytical_model_gpu import SimpleFlightDynamicsTorch
 
 """ 将参数从 config.py传递到 main.py，再由 main.py 传递给 mpc_core.py
     这种方式通常被称为**依赖注入（Dependency Injection）**的一种形式
@@ -99,76 +98,46 @@ def cost_function_gpu(
     return total_costs_batch
 
 # Adaptive CEM MPC主算法
-def adaptive_cem_mpc_episode(
-    episode_num, airsim_env, nn_model, optimizer, replay_buffer,
-    state_scaler, action_scaler, scalers_fitted_once,
-    cem_hyperparams, nn_train_hyperparams, mpc_params
-):
+def adaptive_cem_mpc_episode(episode_num, airsim_env, cem_hyperparams, mpc_params):
     # 从参数字典中解包
     # CEM参数
     prediction_horizon = cem_hyperparams['prediction_horizon']
     n_samples_cem = cem_hyperparams['n_samples']
     n_elites_cem = cem_hyperparams['n_elites']
     n_iter_cem = cem_hyperparams['n_iter']
-    initial_std_cem = cem_hyperparams['initial_std']
-    min_std_cem = cem_hyperparams['min_std']
+    initial_std_cem = cem_hyperparams['initial_std'] # This will depend on action space
+    min_std_cem = cem_hyperparams['min_std']         # This will depend on action space
     alpha_cem = cem_hyperparams['alpha']
 
-    # 神经网络训练参数
-    scaler_refit_freq = nn_train_hyperparams['scaler_refit_frequency']
-    fit_scaler_subset_size = nn_train_hyperparams['fit_scaler_subset_size']
-    batch_size_nn = nn_train_hyperparams['batch_size']
-    epochs_per_step_nn = nn_train_hyperparams['epochs_per_step']
-    min_buffer_for_training_nn = nn_train_hyperparams['min_buffer_for_training']
-    episode_explore_nn = nn_train_hyperparams['episode_explore']
-    action_dim=nn_train_hyperparams["action_dim"]
-    state_dim=nn_train_hyperparams["state_dim"]
-    
     # MPC参数
     waypoint_pass_threshold_y = mpc_params['waypoint_pass_threshold_y']
     max_sim_time_per_episode = mpc_params['max_sim_time_per_episode']
     dt_mpc = mpc_params['dt']
-    control_max=mpc_params['control_max']
+    control_max = mpc_params['control_max']
+    control_min = mpc_params['control_min']
     q_state_matrix_gpu=mpc_params["q_state_matrix_gpu"]
     r_control_matrix_gpu=mpc_params["r_control_matrix_gpu"]
     q_terminal_matrix_gpu=mpc_params["q_terminal_matrix_gpu"]
+    static_q_state_matrix_gpu=mpc_params["static_q_state_matrix_gpu"]
+    static_r_control_matrix_gpu=mpc_params["static_r_control_matrix_gpu"]
+    static_q_terminal_matrix_gpu=mpc_params["static_q_terminal_matrix_gpu"]
+    action_dim = mpc_params['action_dim'] # 4马达PWM输入
+    state_dim = mpc_params['state_dim'] #姿态用wxyz四元数表示
 
     # 环境初始化
-    (current_true_state, final_target_state, waypoints_y,
+    (current_true_state, final_target_state, waypoints_y, # These are numpy arrays
      door_z_positions, door_x_positions, door_x_velocities,
      episode_start_time, door_parameters_dict) = airsim_env.reset()
 
-    device = cfg.device # 从config中获取设备
-
-    # scaler参数更新逻辑
-    if scalers_fitted_once and episode_num > 0 and episode_num % scaler_refit_freq == 0:
-        raw_states_np, raw_actions_np, _ = replay_buffer.get_raw_data()
-        if raw_states_np.shape[0] > 0: # 确认buffer有东西
-            current_buffer_len = len(raw_states_np)
-            actual_fit_size = min(current_buffer_len, fit_scaler_subset_size)
-            
-            if actual_fit_size < current_buffer_len and actual_fit_size > 0 : # buffer比scaler计算batch大的时候就取样
-                indices_fit = np.random.choice(current_buffer_len, actual_fit_size, replace=False)
-                fit_states_np = raw_states_np[indices_fit]
-                fit_actions_np = raw_actions_np[indices_fit]
-            else:
-                fit_states_np = raw_states_np
-                fit_actions_np = raw_actions_np
-
-            if fit_states_np.shape[0] > 0:
-                 state_scaler.fit(torch.tensor(fit_states_np, dtype=torch.float32)) #.to(device) not needed, fit handles device
-            if fit_actions_np.shape[0] > 0:
-                 action_scaler.fit(torch.tensor(fit_actions_np, dtype=torch.float32))
-            # print(f"Scalers refitted at episode {episode_num + 1}")
+    device = cfg.device  # 从config中获取设备
 
     n_steps_this_episode = int(max_sim_time_per_episode / dt_mpc)
     mean_control_sequence_warm_start = np.zeros((prediction_horizon, action_dim))
     
-    # 记录轨迹给mpc用
+    # 记录轨迹画图用
     actual_trajectory_log = [current_true_state.copy()]
     applied_controls_log = []
     time_points_log = [0.0]
-    model_losses_this_episode_log = []
     
     reached_final_target_flag = False
     steps_taken_in_episode = 0
@@ -193,7 +162,7 @@ def adaptive_cem_mpc_episode(
         # door_z_positions: [door1_z, door2_z]
         
         current_idx = _get_current_waypoint_index(current_drone_state[1], waypoints_y, waypoint_pass_threshold_y)
-        target_sequence_np = np.zeros((prediction_horizon, cfg.STATE_DIM))
+        target_sequence_np = np.zeros((prediction_horizon, state_dim))
 
         if current_idx < len(airsim_env.door_frames): # 目标是门
             door_info_idx = current_idx # 门的索引（0或1）
@@ -220,16 +189,16 @@ def adaptive_cem_mpc_episode(
                 # MPC目标：以指定速度穿过指定点
                 target_pos_x = pred_door_x
                 target_pos_y = target_door_y + waypoint_pass_threshold_y # 对准门的y位置+阈值
-                target_pos_z = door_z_positions[door_info_idx] - 3 # z位置在门底部，-3m大约在门中心
+                target_pos_z = door_z_positions[door_info_idx] - 2 # z位置在门底部，-2m大约在门中心
 
                 target_vel_x = pred_door_x_vel # 匹配门的x速度
                 target_vel_y = 4.0  # 穿越门的目标速度
                 target_vel_z = 0.0
 
-                target_sequence_np[i, :] = [
+                target_sequence_np[i, :] = [ # 13维状态
                     target_pos_x, target_pos_y, target_pos_z,
                     target_vel_x, target_vel_y, target_vel_z,
-                    0.0, 0.0 ,0.0 ,0.0 ,0.0 ,0.0 # Zero attitude and angular velocity target
+                    0.707, 0.0 ,0.0 ,0.707 ,0.0 ,0.0 ,0.0 # Zero attitude and angular velocity target
                 ]
         else: # 目标是最终目标
             target_sequence_np = np.tile(final_target_state, (prediction_horizon, 1))
@@ -237,153 +206,116 @@ def adaptive_cem_mpc_episode(
         return torch.tensor(target_sequence_np, dtype=torch.float32, device=device)
 
     # 初始化MPC目标
-    current_mpc_target_sequence_gpu = get_mpc_target_sequence(current_true_state)
+    current_mpc_target_sequence_gpu = get_mpc_target_sequence(current_true_state) # (H, 13)
     
-    print(f"\n--- 开始第 {episode_num + 1} 次训练 ---")
-    # print(f"Initial drone state: {current_true_state[:6]}")
-    # print(f"Initial MPC target (first step): {current_mpc_target_sequence_gpu[0,:6].cpu().numpy()}")
+    # 初始化解析模型类
+    analytical_model_instance = None
+    analytical_model_instance = SimpleFlightDynamicsTorch(
+        n_samples_cem, dt=0.1, dtype=torch.float32       # dt是动力学模型内部积分步长
+    )
+    examiner_instance = SimpleFlightDynamicsTorch(       # 检验并行化之后模型可靠性
+        1, dt=0.05, dtype=torch.float32
+    )
 
+    print(f"\n--- 开始第 {episode_num + 1} 次训练 ---")
 
     for step_idx in range(n_steps_this_episode):
         steps_taken_in_episode = step_idx + 1
 
-        # scaler初始化
-        if not scalers_fitted_once and len(replay_buffer) >= min_buffer_for_training_nn :
-            raw_states_np, raw_actions_np, _ = replay_buffer.get_raw_data()
-            if raw_states_np.shape[0] > 0 :
-                state_scaler.fit(torch.tensor(raw_states_np, dtype=torch.float32))
-            if raw_actions_np.shape[0] > 0:
-                action_scaler.fit(torch.tensor(raw_actions_np, dtype=torch.float32))
-            scalers_fitted_once = True
-            # print("Scalers fitted for the first time.")
+        actual_control_to_apply = np.random.uniform(control_min, control_max, size=action_dim)
 
-        # 决定CEM还是随机探索
-        use_cem_logic = (len(replay_buffer) >= min_buffer_for_training_nn and
-                         episode_num >= episode_explore_nn and scalers_fitted_once) # 确保scaler已经初始化
+        cem_iter_mean_gpu = torch.tensor(mean_control_sequence_warm_start, dtype=torch.float32, device=device)
+        cem_iter_std_gpu = torch.full((prediction_horizon, action_dim), initial_std_cem, dtype=torch.float32, device=device)
+        
+        # CEM优化
+        for cem_idx in range(n_iter_cem):
+            
+            # 采样控制序列
+            perturbations_gpu = torch.normal(mean=0.0, std=1.0,
+                                                size=(n_samples_cem, prediction_horizon, action_dim),
+                                                device=device)
+            sampled_controls_gpu = cem_iter_mean_gpu.unsqueeze(0) + \
+                                                perturbations_gpu * cem_iter_std_gpu.unsqueeze(0)
+            
+            # 剪裁动作范围
+            sampled_controls_gpu = torch.clip(sampled_controls_gpu, control_min, control_max)
 
-        nn_model.to(device)
-        nn_model.eval() # 切到预测模式用来前向传播
+            # 初始状态
+            current_true_state_gpu = torch.tensor(current_true_state, dtype=torch.float32, device=device)
+            current_true_state_gpu = current_true_state_gpu.unsqueeze(0).repeat(n_samples_cem, 1)
 
-        if not use_cem_logic:
-            # 随机探索，向y正向
-            y_move = np.random.uniform(0, control_max, size=1)
-            x_move = np.random.uniform(-control_max, control_max, size=1)
-            z_move = np.random.uniform(-control_max, control_max, size=1)
-            actual_control_to_apply = np.concatenate((x_move, y_move, z_move))
-        else:
-            # cem优化
-            cem_iter_mean_gpu = torch.tensor(mean_control_sequence_warm_start, dtype=torch.float32, device=device)
-            cem_iter_std_gpu = torch.full((prediction_horizon, action_dim), initial_std_cem, dtype=torch.float32, device=device)
+            # simulate_horizon需求动作序列维度(H, K, ActionDim=4)
+            # sampled_controls_gpu的维度是(K, H, ActionDim=4)
+            predicted_trajectory_batch = analytical_model_instance.simulate_horizon(
+                    current_true_state_gpu, # 初始状态
+                    sampled_controls_gpu.permute(1, 0, 2), # 转置成(H, K, 4)
+                    dt_mpc)
 
-            for _ in range(n_iter_cem):
-                # 采样控制序列
-                perturbations_gpu = torch.normal(mean=0.0, std=1.0, # N(0,1)采样扰动
-                                                 size=(n_samples_cem, prediction_horizon, action_dim),
-                                                 device=device)
-                sampled_controls_unscaled_gpu = cem_iter_mean_gpu.unsqueeze(0) + \
-                                                 perturbations_gpu * cem_iter_std_gpu.unsqueeze(0)
-                sampled_controls_unscaled_gpu = torch.clip(sampled_controls_unscaled_gpu, -control_max, control_max)
-
-                # 缩放状态与动作然后用NN预测
-                scaled_current_true_state_gpu = state_scaler.transform(
-                    torch.tensor(current_true_state, dtype=torch.float32, device=device)
-                )
-                batch_initial_states_scaled_gpu = scaled_current_true_state_gpu.repeat(n_samples_cem, 1)
-                
-                # 存储缩放后预测轨迹
-                # Shape: (n_samples, prediction_horizon + 1, state_dim)
-                predicted_trajectories_scaled_gpu = torch.zeros(
-                    (n_samples_cem, prediction_horizon + 1, state_dim), dtype=torch.float32, device=device
-                )
-                predicted_trajectories_scaled_gpu[:, 0, :] = batch_initial_states_scaled_gpu
-
-                current_batch_states_scaled_gpu = batch_initial_states_scaled_gpu
-                with torch.no_grad(): # Disable gradient calculations for prediction
-                    for t in range(prediction_horizon):
-                        current_controls_unscaled_gpu = sampled_controls_unscaled_gpu[:, t, :]
-                        current_controls_scaled_gpu = action_scaler.transform(current_controls_unscaled_gpu)
-                        next_states_pred_scaled_gpu = nn_model(current_batch_states_scaled_gpu, current_controls_scaled_gpu)
-                        # if t == 0:
-                        #     print(f"original x state:{current_true_state}", f"scaled x state:{scaled_current_true_state_gpu}",
-                        #       f"\noriginal x action:{current_controls_unscaled_gpu[0][0].item():.2f}", f"scaled x action:{current_controls_scaled_gpu[0][0].item():.2f}"
-                        #       f"\nscaled pridicted x state:{next_states_pred_scaled_gpu[0][0]:.2f}")
-                        predicted_trajectories_scaled_gpu[:, t + 1, :] = next_states_pred_scaled_gpu
-                        current_batch_states_scaled_gpu = next_states_pred_scaled_gpu
-                
-                # 计算代价函数
-                scaled_mpc_target_sequence_gpu = state_scaler.transform(current_mpc_target_sequence_gpu)
-
-
+            # 计算代价
+            current_idx = _get_current_waypoint_index(current_true_state[1], waypoints_y, waypoint_pass_threshold_y)
+            if current_idx == 2:
                 costs_cem_gpu = cost_function_gpu(
-                    predicted_trajectories_scaled_gpu,
-                    sampled_controls_unscaled_gpu, # Cost function expects unscaled controls with R matrix
-                    scaled_mpc_target_sequence_gpu, # MPC target sequence (scaled)
+                predicted_trajectory_batch,  # (K, H+1, 12) SCALED states
+                sampled_controls_gpu,      # (K, H, ActionDim) UNSCALED controls
+                current_mpc_target_sequence_gpu,
+                static_q_state_matrix_gpu,
+                static_r_control_matrix_gpu, # Use the R matrix appropriate for current action space
+                static_q_terminal_matrix_gpu)
+            else:
+                costs_cem_gpu = cost_function_gpu(
+                    predicted_trajectory_batch,  # (K, H+1, 12) SCALED states
+                    sampled_controls_gpu,      # (K, H, ActionDim) UNSCALED controls
+                    current_mpc_target_sequence_gpu,
                     q_state_matrix_gpu,
-                    r_control_matrix_gpu,
+                    r_control_matrix_gpu, # Use the R matrix appropriate for current action space
                     q_terminal_matrix_gpu
                 )
-                
-                # 选择精英群体
-                elite_indices = torch.argsort(costs_cem_gpu)[:n_elites_cem]
-                elite_sequences_gpu = sampled_controls_unscaled_gpu[elite_indices]
-                
-                # 更新mean和std
-                new_mean_gpu = torch.mean(elite_sequences_gpu, dim=0)
-                new_std_gpu = torch.std(elite_sequences_gpu, dim=0) # 有偏方差
-                
-                cem_iter_mean_gpu = alpha_cem * new_mean_gpu + (1 - alpha_cem) * cem_iter_mean_gpu
-                cem_iter_std_gpu = alpha_cem * new_std_gpu + (1 - alpha_cem) * cem_iter_std_gpu
-                cem_iter_std_gpu = torch.maximum(cem_iter_std_gpu, torch.tensor(min_std_cem, dtype=torch.float32, device=device))
-
-            optimal_control_sequence_np = cem_iter_mean_gpu.cpu().numpy()
-            actual_control_to_apply = optimal_control_sequence_np[0, :].copy()
             
-            # warm start
-            mean_control_sequence_warm_start = np.roll(optimal_control_sequence_np, -1, axis=0)
-            mean_control_sequence_warm_start[-1, :] = optimal_control_sequence_np[-1, :].copy() # Or -2 as original
+            # 选择精英群体
+            elite_indices = torch.argsort(costs_cem_gpu)[:n_elites_cem]
+            elite_sequences_gpu = sampled_controls_gpu[elite_indices]
+            
+            # 更新mean和std
+            new_mean_gpu = torch.mean(elite_sequences_gpu, dim=0)
+            new_std_gpu = torch.std(elite_sequences_gpu, dim=0) # 有偏方差
+            
+            cem_iter_mean_gpu = alpha_cem * new_mean_gpu + (1 - alpha_cem) * cem_iter_mean_gpu
+            cem_iter_std_gpu = alpha_cem * new_std_gpu + (1 - alpha_cem) * cem_iter_std_gpu
+            cem_iter_std_gpu = torch.maximum(cem_iter_std_gpu, torch.tensor(min_std_cem, dtype=torch.float32, device=device))
+
+        optimal_control_sequence = cem_iter_mean_gpu.cpu().numpy()
+        actual_control_to_apply = optimal_control_sequence[0, :].copy()
+        
+        # warm start
+        mean_control_sequence_warm_start = np.roll(optimal_control_sequence, -1, axis=0)
+        mean_control_sequence_warm_start[-1, :] = optimal_control_sequence[-1, :].copy()
+
+        # 检验并行化模型可靠性
+        examined_trajectory_batch = examiner_instance.simulate_horizon(
+                    current_true_state_gpu[0,:].unsqueeze(0), # 初始状态取一个
+                    cem_iter_mean_gpu.unsqueeze(1), # 转置成(H, K, 4)
+                    dt_mpc)
+        print("model prediction:", examined_trajectory_batch[0][1])
 
         # AirSim执行指令
         next_true_state, _, _, collided = airsim_env.step(actual_control_to_apply)
-        
-        # 状态动作对存进nn
-        # 避免无人机卡在某处或本次发生了碰撞
-        # or if a collision just happened (potentially bad state transition)
-        # A more robust filter might be if np.linalg.norm(next_true_state[:3] - current_true_state[:3]) is very small.
-        if not collided and np.linalg.norm(current_true_state[0:2]-next_true_state[0:2])>0.5:
-            if np.linalg.norm(current_true_state[0:2]) > 0.5 :
-                 replay_buffer.push(current_true_state, actual_control_to_apply, next_true_state)
-
-        # 检查episode是否结束
+        print("actual state:", next_true_state)
+        # 终止条件
         pos_dist_to_final = np.linalg.norm(next_true_state[:3] - final_target_state[:3])
-        vel_dist_to_final = np.linalg.norm(next_true_state[3:6] - final_target_state[3:6])
         
-        if pos_dist_to_final < cfg.POS_TOLERANCE and vel_dist_to_final < cfg.VELO_TOLERANCE:
+        if pos_dist_to_final < cfg.POS_TOLERANCE:
             print(f"第 {episode_num + 1} 次训练: 最终目标已在第 {steps_taken_in_episode} 步到达!")
             reached_final_target_flag = True
             break
-
-        if collided or np.linalg.norm(current_true_state[0:2]-next_true_state[0:2])<0.01:
+        if collided: # or np.linalg.norm(current_true_state[0:2]-next_true_state[0:2])<0.01: # Original condition
             print(f"第 {episode_num + 1} 次训练: 在第 {steps_taken_in_episode} 步发生碰撞。")
-            if steps_taken_in_episode < 10: # Short pause if early collision
+            if steps_taken_in_episode < 10: 
                 time.sleep(0.5)
             break
 
         if steps_taken_in_episode >= n_steps_this_episode:
             print(f"第 {episode_num + 1} 次训练: 仿真时间到，最终目标状态: {'到达' if reached_final_target_flag else '未到达'}")
             break
-
-        # 神经网络训练
-        if scalers_fitted_once: # 只在scaler已经初始化的情况下训练
-            avg_nn_loss_step, _ = train_nn_model(
-                nn_model, optimizer, replay_buffer,
-                batch_size_nn, epochs_per_step_nn,
-                min_buffer_for_training_nn,
-                state_scaler, action_scaler, device
-            )
-            if avg_nn_loss_step > 0:
-                model_losses_this_episode_log.append(avg_nn_loss_step)
-        else:
-            avg_nn_loss_step = 0.0
 
         # 更新状态
         applied_controls_log.append(actual_control_to_apply.copy())
@@ -392,25 +324,13 @@ def adaptive_cem_mpc_episode(
         time_points_log.append(steps_taken_in_episode * dt_mpc)
 
         # 更新目标
-        current_mpc_target_sequence_gpu = get_mpc_target_sequence(current_true_state) # Predict for next t
-
-        if step_idx % 1 == 0:
-            print(f"Ep {episode_num+1}, Step {steps_taken_in_episode}: , "
-                  f"NN Loss: {avg_nn_loss_step:.4f}, Buffer: {len(replay_buffer)}, "
+        current_mpc_target_sequence_gpu = get_mpc_target_sequence(current_true_state)
+        # print(current_mpc_target_sequence_gpu)
+        if step_idx % 1 == 0: # Print frequency
+             print(f"\nEp {episode_num+1}, Step {steps_taken_in_episode},"
                   f"Pos: [{current_true_state[0]:.1f},{current_true_state[1]:.1f},{current_true_state[2]:.1f}],"
-                  f"\nTarget: [{current_mpc_target_sequence_gpu[0,0]:.1f},{current_mpc_target_sequence_gpu[0,1]:.1f},{current_mpc_target_sequence_gpu[0,2]:.1f}]"
-                  f"\nAction: [{actual_control_to_apply[0]:.1f},{actual_control_to_apply[1]:.1f},{actual_control_to_apply[2]:.1f}]")
-
-
-    avg_episode_loss = np.nanmean(model_losses_this_episode_log) if model_losses_this_episode_log else 0.0
-    print(f"--- 第 {episode_num + 1} 次训练结束 --- 步数: {steps_taken_in_episode}, "
-          f"是否到达最终目标: {reached_final_target_flag}, 平均损失: {avg_episode_loss:.4f}")
-    
-    if episode_num > 0 and (episode_num + 1) % 20 == 0 and steps_taken_in_episode > 5 :
-        save_filename_base = f"{episode_num+1}"
-        save_model_and_buffer(nn_model, replay_buffer, state_scaler, action_scaler, save_filename_base)
-        # Original filename format: f"{episode_num+1}_{avg_nn_loss:.6}"
+                  f"Action: {actual_control_to_apply[0]:.2f},{actual_control_to_apply[1]:.2f},{actual_control_to_apply[2]:.2f},{actual_control_to_apply[3]:.2f}"
+                  )
 
     return (np.array(actual_trajectory_log), np.array(applied_controls_log),
-            np.array(time_points_log), np.array(model_losses_this_episode_log),
-            reached_final_target_flag, steps_taken_in_episode, avg_episode_loss, scalers_fitted_once)
+            np.array(time_points_log), reached_final_target_flag, steps_taken_in_episode)
