@@ -4,7 +4,6 @@ from datetime import datetime
 import time
 import math
 import config as cfg
-from analytical_model import SimpleFlightDynamics
 
 class AirSimEnv:
     def __init__(self, cfg): # 门框的名称（确保与UE4中的名称一致）
