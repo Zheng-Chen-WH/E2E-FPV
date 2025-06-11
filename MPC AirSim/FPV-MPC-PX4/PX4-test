@@ -1,0 +1,301 @@
+'''启动px4:PX4-Autopilot文件夹下执行make px4_sitl_default none'''
+"""用mavlink向px4发布指令"""
+
+from pymavlink import mavutil
+import time
+import airsim
+from pymavlink import mavutil
+import numpy as np
+import time
+import math
+from datetime import datetime
+
+class DummyCfg:
+    def __init__(self):
+        self.DT = 0.1
+        self.door_frames_names = ["DoorFrame1", "DoorFrame2"]
+        self.door_param = {
+            "initial_x_pos": [0.0, 0.0],
+            "amplitude": 1.0,
+            "frequency": 0.1,
+            "deviation": [0.0, 0.0]
+        }
+        self.mavlink_connection_string = 'udp:127.0.0.1:14550'
+        self.mavlink_target_system = 1
+        self.mavlink_target_component = 1
+        self.takeoff_altitude = -3.0
+        self.control_mode_px4 = "OFFBOARD" # OFFBOARD mode is required for acceleration setpoints
+        self.px4_vehicle_name_in_airsim = "PX4"
+
+class AirSimPx4Env:
+    def __init__(self, cfg):
+        self.client = airsim.MultirotorClient()
+        self.client.confirmConnection()
+
+        self.mavlink_conn_str = cfg.mavlink_connection_string
+        self.target_system = cfg.mavlink_target_system
+        self.target_component = cfg.mavlink_target_component
+        self.drone = None
+
+        self.DT = cfg.DT
+        self.door_frames = cfg.door_frames_names
+        self.initial_door_pose_orientation = None
+        self.door_param = cfg.door_param
+        self.start_time_episode = 0
+        self.door_x_velocities = np.zeros(len(self.door_frames))
+        self.door_current_x_positions = np.zeros(len(self.door_frames))
+        self.waypoints_y = []
+        self.door_z_positions = []
+        self.takeoff_altitude_px4 = cfg.takeoff_altitude
+        self.px4_vehicle_name_in_airsim = "PX4"
+        self._connect_mavlink()
+
+    def _connect_mavlink(self):
+        print(self.target_system)
+        while self.drone is None or self.target_system==0:
+            # 连接到 PX4 SITL
+            self.drone = mavutil.mavlink_connection(self.mavlink_conn_str,
+                                                autoreconnect=True) 
+            # 等待心跳消息
+            print("Waiting for heartbeat...")
+            self.drone.wait_heartbeat()
+            self.target_system=self.drone.target_system
+            print(f"MAVLink Heartbeat received from system {self.drone.target_system}, component {self.drone.target_component}")
+        self.target_system = self.drone.target_system
+        self.target_component = self.drone.target_component
+
+    def get_drone_state_mavlink(self):
+        if not self.drone:
+            return np.zeros(12)
+        pos_ned = np.array([np.nan]*3)
+        vel_ned = np.array([np.nan]*3)
+        attitude_rad = np.array([np.nan]*3)
+        angular_vel_rad_s = np.array([np.nan]*3)
+        msg_pos = self.drone.recv_match(type='LOCAL_POSITION_NED', blocking=False, timeout=0.02)
+        if msg_pos:
+            pos_ned = np.array([msg_pos.x, msg_pos.y, msg_pos.z])
+            vel_ned = np.array([msg_pos.vx, msg_pos.vy, msg_pos.vz])
+        msg_att = self.drone.recv_match(type='ATTITUDE', blocking=False, timeout=0.02)
+        if msg_att:
+            attitude_rad = np.array([msg_att.pitch, msg_att.roll, msg_att.yaw])
+            angular_vel_rad_s = np.array([msg_att.rollspeed, msg_att.pitchspeed, msg_att.yawspeed])
+        pos_ned = np.nan_to_num(pos_ned)
+        vel_ned = np.nan_to_num(vel_ned)
+        attitude_rad = np.nan_to_num(attitude_rad)
+        angular_vel_rad_s = np.nan_to_num(angular_vel_rad_s)
+        return np.concatenate((pos_ned, vel_ned, attitude_rad, angular_vel_rad_s))
+    
+    def get_drone_state(self):
+        # 获取无人机状态
+        fpv_state_raw = self.client.getMultirotorState()
+
+        # 获取位置
+        position = fpv_state_raw.kinematics_estimated.position
+        fpv_pos = np.array([position.x_val, position.y_val, position.z_val])
+
+        # 获取线速度
+        linear_velocity = fpv_state_raw.kinematics_estimated.linear_velocity
+        fpv_vel = np.array([linear_velocity.x_val, linear_velocity.y_val, linear_velocity.z_val])
+
+        # 获取姿态角 (俯仰pitch, 滚转roll, 偏航yaw, 欧拉角表示, 弧度制)
+        orientation_q = fpv_state_raw.kinematics_estimated.orientation
+        pitch, roll, yaw = airsim.to_eularian_angles(orientation_q) # # 将四元数转换为欧拉角 (radians)
+        fpv_attitude = np.array([roll, pitch, yaw])
+        # roll_deg = math.degrees(roll)
+        # pitch_deg = math.degrees(pitch)
+        # yaw_deg = math.degrees(yaw)
+        # fpv_attitude = np.array([pitch_deg, roll_deg, yaw_deg])
+
+        # 获取角速度
+        angular_velocity = fpv_state_raw.kinematics_estimated.angular_velocity
+        fpv_angular_vel = np.array([angular_velocity.x_val, angular_velocity.y_val, angular_velocity.z_val])
+
+        return np.concatenate((fpv_pos, fpv_vel, fpv_attitude, fpv_angular_vel))
+
+    def send_acceleration(self,acceleration_xyz_body):
+        self.drone.mav.set_position_target_local_ned_send(
+            # 注意除了AFX AFY AFZ 设置为 0 表示不忽略以外，还需要将 FORCE 置为 0。否则，PX4 将误认为 AFX AFY AFZ 是推力矢量。
+            0,  # 时间戳（可以设置为0）
+            self.drone.target_system,  # 系统ID
+            self.drone.target_component,  # 组件ID
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,  # 使用LOCAL_NED坐标系
+            0b100000111111,  # type_mask（忽略位置x, y, z，只启用加速度vx, vy, vz）
+            0, 0, 0,  # x, y, z位置（忽略）
+            0, 0, 0,  # x, y, z速度
+            acceleration_xyz_body[0], acceleration_xyz_body[1], acceleration_xyz_body[2],  # x, y, z加速度（忽略）
+            0, 0  # yaw和yaw_rate（忽略）
+        )
+
+    def _send_mavlink_command_long(self, command, params, confirmation=0, timeout=3):
+        self.drone.mav.command_long_send(
+            self.target_system, # 目标系统的ID (通常是飞控的System ID, 例如 1)
+            self.target_component, # 目标组件的ID (通常是飞控主组件的Component ID, 例如 1)
+            command, # 要发送的具体命令ID
+            confirmation, # 命令的确认号
+            params[0], params[1], params[2], params[3], params[4], params[5], params[6]
+        )
+        ack_msg_type = 'COMMAND_ACK' 
+        ack = self.drone.recv_match(type=ack_msg_type,
+                                    blocking=True,
+                                    timeout=timeout)
+        if ack: # 如果ack不是None
+            if ack is not None:
+                return True
+            else:
+                return False
+        print(f"MAVLink Command ACK not received.") # 如果ack是None，意味着等待超时，没有收到预期的COMMAND_ACK。
+        return False
+
+    def send_position(self):
+        self.drone.mav.set_position_target_local_ned_send( #NED坐标系下给出位置目标
+            0,  # time_boot_ms (not used)
+            self.drone.target_system,
+            self.drone.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            0b111111111000,  # 控制掩码，每位代表启用不同值，1为不启用，0为启用，0b表示二进制编码，12位分别表示航向角速率，航向角，加速度表示加速度/力，ax,ay,az,vx,vy,vz,x,y,z
+            0, 0, -3,  # x, y, z positions (meters)
+            0, 0, 0,  # x, y, z velocity in m/s (not used)
+            0, 0, 0,  # x, y, z acceleration (not used)
+            0, 0  # yaw, yaw_rate (not used)
+        )
+
+    def reset(self):
+        self.client.reset()
+        time.sleep(1)
+        self.client.enableApiControl(True)
+
+        self.drone.mav.command_long_send(
+                self.target_system, self.target_component,
+                mavutil.mavlink.MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+                0,
+                1, # 1表示重启
+                0, # 2表示正常重启
+                0, 0, 0, 0, 0
+            )
+        # reboot之后重新连接
+        self.drone = None # Clear old connection
+        self._connect_mavlink() # This will wait for heartbeat again
+        time.sleep(10)
+        self.state_injection()
+        time.sleep(2)
+
+        self.waypoints_y = [0.0]
+        self.door_initial_x_positions = []
+        self.door_current_x_positions = np.zeros(len(self.door_frames))
+        self.door_z_positions = []
+        self.door_x_velocities = np.zeros(len(self.door_frames))
+        self.door_param["deviation"] = np.random.uniform(0, 2 * math.pi, size=len(self.door_frames))
+        self.initial_door_pose_orientation = None
+            
+        self.door_param["initial_x_pos"] = self.door_initial_x_positions
+
+        self.final_target_desc = np.array([
+            np.random.uniform(-5, 5), np.random.uniform(38, 42), np.random.uniform(-2, -1)
+        ])
+        self.waypoints_y.append(self.final_target_desc[1])
+        target_ball_pos_vec = airsim.Vector3r(self.final_target_desc[0], self.final_target_desc[1], self.final_target_desc[2])
+        ball_name = "OrangeBall_Blueprint"
+        ball_initial_pose = self.client.simGetObjectPose(ball_name)
+        self.client.simSetObjectPose(ball_name, airsim.Pose(target_ball_pos_vec, ball_initial_pose.orientation), True)
+
+        self.state_injection()
+        time.sleep(2)
+        print("trying state injection")
+        # 设置飞行模式为 Offboard
+        self.drone.set_mode("OFFBOARD")
+        self.state_injection()
+        self.drone.arducopter_arm()
+        print("Armed!")
+        
+        self.start_time_episode = time.time()
+        self.door_param["start_time"] = self.start_time_episode
+        current_drone_state = self.get_drone_state()
+        print("AirSim Visual", current_drone_state)
+        print("Mavlink Estimate", self.get_drone_state_mavlink())
+        return (current_drone_state, self.final_target_desc[:3], self.waypoints_y,
+                self.door_z_positions, np.array(self.door_current_x_positions), self.door_x_velocities,
+                self.start_time_episode, self.door_param)
+
+    def step(self, control_action_xyz_acceleration_body):
+        env.state_injection()
+        self.send_acceleration(control_action_xyz_acceleration_body)
+
+        time.sleep(self.DT)
+        elapsed_time = time.time() - self.start_time_episode
+        env.state_injection()
+        current_drone_state = self.get_drone_state()
+        
+        collided = False
+        collision_info = self.client.simGetCollisionInfo()
+        if collision_info.has_collided and elapsed_time > 1.0 :
+            # print(f"Collision detected!")
+            collided = True
+        
+        return current_drone_state, np.array(self.door_current_x_positions), self.door_x_velocities, collided
+    
+    def state_injection(self):
+        drone_state=self.get_drone_state()
+        timestamp_us = int(time.time() * 1e6)
+        try:
+            # 发送 VISION_POSITION_ESTIMATE 消息
+            self.drone.mav.vision_position_estimate_send(
+                timestamp_us,
+                drone_state[1],
+                drone_state[0],
+                - drone_state[2],
+                drone_state[6],
+                drone_state[7],
+                drone_state[8],
+                # position_covariance, orientation_covariance (可选, 0表示高置信度)
+                [0.001] * 21, # 协方差矩阵，可以设置为0表示非常高的置信度
+                0, # reset_counter (保留为0)
+            )
+            self.drone.mav.vision_speed_estimate_send(timestamp_us,
+                drone_state[4],
+                drone_state[3],
+                - drone_state[5],
+                # position_covariance, orientation_covariance (可选, 0表示高置信度)
+                [0.001] * 9, # 协方差矩阵，可以设置为0表示非常高的置信度
+                0) # reset_counter (保留为0)
+        except Exception as e:
+            print(f"Error: {e}")
+
+    def close(self):
+        print("Closing")
+        if self.drone != 0:
+            print("Disarming drone via MAVLink...")
+            self._send_mavlink_command_long(
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                params=[0, 0, 0, 0, 0, 0, 0], timeout=3
+            )
+            self.drone.close()
+            print("MAVLink connection closed.")
+        self.client.reset()
+        self.client.enableApiControl(False, vehicle_name=self.px4_vehicle_name_in_airsim)
+        print("AirSim client reset and API control disabled.")
+
+if __name__ == '__main__':
+    
+    cfg = DummyCfg()
+    env = AirSimPx4Env(cfg)
+    for episode in range(3):
+        (drone_state, target_pos, waypoints_y,
+            door_z, door_x, door_vx,
+            start_time, door_params) = env.reset()
+        
+        for i in range(20): #先起飞
+            env.send_position()
+            time.sleep(0.1)
+
+        max_steps = 50
+        for step_num in range(max_steps):
+            ax_command, ay_command, az_command = 0.0, 0.0, 0.0
+            az_command = 0.0  # Upwards in NED (m/s^2)
+            ay_command = 0.5   # Slight forward acceleration
+
+            control_action_accel = np.array([ax_command, ay_command, az_command])
+            drone_state, door_x, door_vx, collided = env.step(control_action_accel) 
+            # print(f"Drone State (MAVLink): PosNED=({drone_state[0]:.2f},{drone_state[1]:.2f},{drone_state[2]:.2f}) VelNED=({drone_state[3]:.2f},{drone_state[4]:.2f},{drone_state[5]:.2f})")
+
+    env.close()
+    print("Example finished.")
