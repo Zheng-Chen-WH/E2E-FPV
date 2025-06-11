@@ -285,6 +285,7 @@ def adaptive_cem_mpc_episode(episode_num, airsim_env, cem_hyperparams, mpc_param
 
         optimal_control_sequence = cem_iter_mean_gpu.cpu().numpy()
         actual_control_to_apply = optimal_control_sequence[0, :].copy()
+        print("动作：", actual_control_to_apply)
         
         # warm start
         mean_control_sequence_warm_start = np.roll(optimal_control_sequence, -1, axis=0)

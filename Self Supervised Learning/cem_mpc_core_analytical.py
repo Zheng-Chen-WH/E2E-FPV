@@ -126,8 +126,7 @@ def adaptive_cem_mpc_episode(episode_num, airsim_env, cem_hyperparams, mpc_param
 
     # 环境初始化
     (current_true_state, final_target_state, waypoints_y, # These are numpy arrays
-     door_z_positions, door_x_positions, door_x_velocities,
-     episode_start_time, door_parameters_dict) = airsim_env.reset()
+     door_z_positions, door_parameters_dict) = airsim_env.reset()
 
     device = cfg.device  # 从config中获取设备
 

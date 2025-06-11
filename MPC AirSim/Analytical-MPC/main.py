@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import torch.optim as optim
 import config as cfg
 from airsim_env import AirSimEnv
 from cem_mpc_core_analytical import adaptive_cem_mpc_episode

@@ -1,18 +1,21 @@
 import numpy as np
 import torch
+import torch.nn as nn
 
 # 仿真与通用参数
 DT = 0.10  # MPC轨迹每步步长
+img_time = 0.02
 """在GPU并行生成轨迹处理之后N=100时计算时间减少到了0.005s以下
    N=1000时为0.005-0.007s
    N=10000时为0.009s左右
    网络每次train耗时大约0.003s"""
-MAX_SIM_TIME_PER_EPISODE = 30  # 单个Episode最大时间
-NUM_EPISODES = 1000  # 训练最大episode数
+MAX_STEP_PER_EPISODE = 500  # 单个Episode最大时间
 POS_TOLERANCE = 1  # 判定抵达目标的位置误差限 (meters)
 VELO_TOLERANCE = 1  # 判定抵达目标的速度误差限 (m/s)
 CONTROL_MAX = 0.66 # 最大控制指令范围（simpleflight为速度范围，PX4为加速度，现在是油门信号）
 CONTROL_MIN = 0.62 # 油门信号下限
+SCALED_CONTROL_MAX = 1.0 # 网络输出信号在-1，1间以便增大损失函数
+SCALED_CONTROL_MIN = -1.0
 
 # CEM参数
 PREDICTION_HORIZON = 5  # MPC预测长度 (N_steps)
@@ -22,22 +25,27 @@ N_ITER_CEM = 1  # 每个MPC优化步的CEM迭代轮数
 INITIAL_STD_CEM = CONTROL_MAX  # CEM采样初始标准差，给大一点利于探索
 MIN_STD_CEM = 0.05  # CEM标准差最小值
 ALPHA_CEM = 0.8  # CEM方差均值更新时软参数，新的值所占比重
+MPC_STATE_DIM=13
 
-# 神经网络与训练参数
-STATE_DIM = 13  # 状态向量维度
-ACTION_DIM = 4  # 动作向量维度
-NN_HIDDEN_SIZE = 128  # 隐藏层大小
+# 神经网络与训练参数 
+PI_STATE_DIM = 18  # Pi网络状态:暂定之前三次PWM和目标位置、速度
+Q_STATE_DIM = 25 # Q网络状态：暂定无人机姿态（四元数）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
+ACTION_DIM = 4  # 动作向量维度，4个PWM
+NN_HIDDEN_SIZE = [128,128,128, 64]  # 隐藏层大小
 LEARNING_RATE = 5e-5  # 学习率
-BUFFER_SIZE = 100000  # buffer大小
-BATCH_SIZE = 64  # 训练batch size
-NN_TRAIN_EPOCHS_PER_STEP = 5  # 每次训练时训练epoch数
+BUFFER_SIZE = 10000000  # buffer大小
+BATCH_SIZE = 128  # 训练batch size
+NN_TRAIN_EPOCHS_PER_STEP = 2  # 每次训练时训练epoch数
 MIN_BUFFER_FOR_TRAINING = BATCH_SIZE  # 开始训练时buffer最小容量
 EPISODE_EXPLORE = 5  # 随机探索episode数
 SCALER_REFIT_FREQUENCY = 10  # 归一化参数更新频率
 FIT_SCALER_SUBSET_SIZE = 2000  # 用于更新归一化参数的样本数
+NUM_TRANSFORMER_FRAMES = 4
+NUM_EPISODES = 1000  # 训练最大episode数
+WARM_UP = 50000 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
 
 # 穿门任务专用参数
-WAYPOINT_PASS_THRESHOLD_Y = -0.5  # 判定无人机穿门的阈值，负值拟合到达门前一点然后冲过去
+WAYPOINT_PASS_THRESHOLD_Y = 0.5  # 判定无人机穿门的阈值
 
 # PyTorch设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,19 +63,19 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # # 运行状态代价矩阵
 # # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-8: 姿态 (p,r,y), 9-11: 角速度 (wx,wy,wz)
 # Q_STATE_COST_NP = np.diag([
-#     2500000.0, 10000.0, 100000.0,  # x,y,z位置
-#     1000000.0, 100000.0, 1000000.0,   # x,y,z速度
-#     100000.0, 1000000.0, 1000000.0, 1000000.0,     # 姿态
-#     1000000.0, 100000.0, 1000000.0      # 角速度
+#     250.0, 1.0, 10.0,  # x,y,z位置
+#     100.0, 10.0, 100.0,   # x,y,z速度
+#     10.0, 100.0, 100.0, 100.0,     # 姿态
+#     100.0, 10.0, 100.0      # 角速度
 # ])
 # Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, device=device)
 
 # # 终端状态代价矩阵
 # Q_TERMINAL_COST_NP = np.diag([
-#     2500000.0, 10000.0, 100000.0,  # x,y,z位置
-#     1000000.0, 100000.0, 1000000.0,   # x,y,z速度
-#     100000.0, 1000000.0, 1000000.0, 1000000.0,     # 姿态
-#     1000000.0, 100000.0, 1000000.0      # 角速度
+#     250.0, 1.0, 10.0,  # x,y,z位置
+#     100.0, 10.0, 100.0,   # x,y,z速度
+#     10.0, 100.0, 100.0, 100.0,     # 姿态
+#     100.0, 10.0, 100.0      # 角速度
 # ])
 # Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float32, device=device)
 
@@ -100,6 +108,25 @@ Q_TERMINAL_COST_NP = np.diag([
 ])
 Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float32, device=device)
 
+# 第二扇门特供
+# 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
+Q_STATE_COST_NP_TWO = np.diag([
+    500.0, 1.0, 200.0,  # x,y,z位置
+    150.0, 5.0, 100.0,   # x,y,z速度
+    10.0, 100.0, 100.0, 100.0,     # 姿态
+    100.0, 10.0, 100.0      # 角速度
+])
+Q_STATE_COST_MATRIX_GPU_TWO = torch.tensor(Q_STATE_COST_NP_TWO, dtype=torch.float32, device=device)
+
+# 终端状态代价矩阵
+Q_TERMINAL_COST_NP_TWO = np.diag([
+    500.0, 1.0, 200.0,  # x,y,z位置
+    150.0, 5.0, 100.0,   # x,y,z速度
+    10.0, 100.0, 100.0, 100.0,     # 姿态
+    100.0, 10.0, 100.0      # 角速度
+])
+Q_TERMINAL_COST_MATRIX_GPU_TWO = torch.tensor(Q_TERMINAL_COST_NP_TWO, dtype=torch.float32, device=device)
+
 # 静态代价权重矩阵
 # 静态目标控制代价矩阵
 STATIC_R_CONTROL_COST_NP = np.diag([
@@ -122,7 +149,7 @@ STATIC_Q_STATE_COST_MATRIX_GPU = torch.tensor(STATIC_Q_STATE_COST_NP, dtype=torc
 
 # 静态目标终端状态代价矩阵
 STATIC_Q_TERMINAL_COST_NP = np.diag([
-    200.0, 150.0, 500.0,  # x,y,z位置
+    200.0, 150.0, 800.0,  # x,y,z位置
     20.0, 20.0, 150.0,   # x,y,z速度
     50.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 50.0, 100.0      # 角速度
@@ -132,6 +159,7 @@ STATIC_Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(STATIC_Q_TERMINAL_COST_NP, dtyp
 # AirSim参数
 door_frames_names = ["men_Blueprint", "men2_Blueprint"]
 door_param= { # 门的正弦运动参数
+            "num": len(door_frames_names),
             "amplitude": 2,  # 运动幅度（米）
             "frequency": 0.1,  # 运动频率（Hz）
             "deviation": None,  # 两个门的初始相位 (set in reset)
