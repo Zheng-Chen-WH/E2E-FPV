@@ -136,14 +136,30 @@
 + 考虑用照片数据集预训练CNN识别门的相对位置和速度（仅相对位置+速度），然后EKF或GRU解算相对速度、角速度？
 
 ## 6.17
-+ 整理一下目前的FPV视觉导航方案
-|论文|方案|
-|-------------------------------|----------|
-|loss_39138_0.008137084543704987|-1126.7585|
-|loss_26021_0.008864268660545349|-1117.2075|
-|loss_24000_0.010233676061034203|-648.1272|
-|loss_23341_0.011256770230829716|263.7337|
-|loss_21213_0.011367385275661945|-1025.4033|
-|loss_20995_0.01238981168717146|-929.7548|
-|loss_20133_0.013162793591618538|-1426.1|
-|loss_19985_0.013779347762465477|-1127.3888|
+整理一下目前的FPV视觉导航方案  
+**AlphaPilot: Autonomous Drone Racing**
+  + Gate_detector+VIO，采用门角检测补偿高速运动时VIO漂移问题，两者EKF融合估计状态
+  + CNN采用5层U-Net，[12, 18, 24, 32, 32]，每层卷积核[3, 3, 3, 5, 7]，VIO采用ROVIO
+    + ROVIO论文: Robust visual inertial odometry using a direct EKF-based approach.
+    + U-Net论文：U-net: Convolutional networks for biomedical image segmentation.
+  + 门检测器工作流程：
+    1. 从图片中检测所有门角
+    2. 网络学习PAF场对门角进行连接
+      + PAF论文：Realtime multi-person 2d pose estimation using part affinity fields
+  + 控制量为z方向总推力和角速度，轨迹跟踪位置PD控制，姿态P控制
+
+**Deep Drone Racing: Learning Agile Flight in Dynamic Environments 怎么也是穿越移动的门**
+  + ResNet输入归一化rgb图片，输出归一化图像坐标中新目标方向和归一化速度，7个卷积层，3个残差块 + 1个全连接层
+    + ResNet论文：Dronet: Learning to fly by driving.
+  + 控制器从二维图像坐标目标点根据相机投影光线反向+预测深度$d$的位置，计算三维局部坐标系目标点，$d$与归一化速度成正比，目标速度等于归一化速度*$v_{max}$，最后计算最小颤动轨迹抵达目标
+    + 跟踪颤动轨迹论文：Automatic re-initialization and failure recovery for aggressive flight with a monocular vision-based quadrotor.
+  + 模仿学习，专家轨迹由Minimum snap trajectory generation and control for quadrotors中的算法生成
+  + DAgger方法提高对专家未见数据泛化性
+  + **发现只要更改静态门的布局，无人机就能泛化到动态门上**
+  + gazebo训练
+  + 发现直接端到端控制（控制的是无人机速率）学不出来，得加底层控制器
+  + 他们的门也是正弦运动
+**Learning High-Speed Flight in the Wild**：
+  + 输入深度图
+  + 采用gazebo+Unity渲染，flightmare控制
+
