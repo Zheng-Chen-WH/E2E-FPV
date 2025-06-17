@@ -169,7 +169,7 @@ class CEM_MPC():
                 # MPC目标：以指定速度穿过指定点
                 target_pos_x = pred_door_x
                 target_pos_y = target_door_y + self.waypoint_pass_threshold_y # 对准门的y位置+阈值
-                target_pos_z = self.door_z_positions[door_info_idx] - 2 # z位置在门底部，-2m大约在门中心
+                target_pos_z = self.door_z_positions[door_info_idx] - 1.5 # z位置在门底部，-1.5m大约在门中心
 
                 target_vel_x = pred_door_x_vel # 匹配门的x速度
                 target_vel_y = 4.0  # 穿越门的目标速度

@@ -43,8 +43,7 @@ def transformer(embedding_dim,frames):
         num_frames=frames,          # 输入帧数
         num_classes=1,         # 随便给一个分类数量，后面替换分类头
         depth=8,               # Transformer深度（Small模型）
-        heads=8                # 注意力头数量
-    )
+        heads=8)                # 注意力头数量
     # 替换分类头为 Identity 层，直接输出特征
     model.cls_head = torch.nn.Identity()
     # 移除 to_out 部分

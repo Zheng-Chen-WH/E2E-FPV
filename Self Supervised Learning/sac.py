@@ -97,6 +97,10 @@ class SAC(object):
 
         self.policy_optim.zero_grad()
         policy_loss.backward()
+        # for name, param in self.policy.named_parameters():
+        #     if param.grad is not None:
+        #         # 打印梯度范数，可以看到梯度大小
+        #         print(f"{name}: Grad Norm = {param.grad.norm().item()}")
         self.policy_optim.step()
 
         if self.automatic_entropy_tuning:
