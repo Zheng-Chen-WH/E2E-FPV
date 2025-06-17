@@ -71,6 +71,10 @@ git remote -v
 ```
 git remote "远程仓库名" set-url [url]
 ```  
+**删除远程仓库链接**：
+```
+git remote rm xxxxx
+```
 **仓库克隆**：
 ```
 git clone <URL> .
