@@ -159,7 +159,67 @@
   + gazebo训练
   + 发现直接端到端控制（控制的是无人机速率）学不出来，得加底层控制器
   + 他们的门也是正弦运动
+
 **Learning High-Speed Flight in the Wild**：
   + 输入深度图
   + 采用gazebo+Unity渲染，flightmare控制
+  + 模仿学习专家采用Metropolis-Hastings采样生成轨迹+MPC跟踪轨迹
+  + 神经网络采用双backbone，MobileNet-V3卷积网络+1D卷积输入640*480深度图像并生成32维特征向量，无人机速度+姿态+参考方向经过四层[64,32,32,32]+LeakyRelu的MLP+1D卷积生成32维特征向量，两个32维特征向量拼接后经过[64,128,128]+LeakyRelu的MLP后生成M条参考轨迹，每条由10个相对位置点构成
+    + MobileNetV3论文：Searching for mobilenetv3
+  + 神经网络输出轨迹由MPC跟踪
+  + 模仿学习也用了DAgger
++ 学到了新知识，现在这种MPC监督学习+强化可以叫GPS（Guided Policy Search）：Learning Deep Control Policies for Autonomous Aerial Vehicles with MPC-Guided Policy Search    
 
+**Control of a Quadrotor with Reinforcement Learning**：
+  + 证明了用强化学习直接控制旋翼是可能的，输入姿态是九元素旋转矩阵（常见）
+
+**最大值抑制**：目标检测时保留同一个物体的识别框中置信度最高的，删去与这个框重叠度过高的框，缩减识别框数量     
+**一阶段目标检测网络**：SSD、YOLO     
+**PnP算法**：已知三维物体点、相机数据和2D图片，计算相机所在位置和姿态
+  + 必须满足对极约束：
+    + **对极几何**：描述两张不同位置拍摄的图像（通常是不同时刻或不同相机）之间，同一个三维点在两张图像上的投影点所满足的几何关系
+    + **对极约束**：对于一个三维空间点，它在第一张图像上的投影点，以及它在第二张图像上的投影点，加上两张图像的相机中心，这五个点必然共面。这个面叫做对极平面。
+    + **对极线**：如果知道一个点在第一张图像上的位置，那么它在第二张图像上的对应点，一定落在第二张图像上的一条线上，这条线叫做对极线，在第二张图像上从三维空间点指向第一张图像相机中心。
+    + 相机不平移而纯旋转时，所有对极线都会汇聚到图像的中心点（或主点，如果考虑畸变的话）
+    + 在仅旋转时，PnP算法也能计算出姿态，但是不能计算出位置，必须发生平移
+
+**Teaching UAVs to Race: End-to-End Regression of Agile Controls in Simulation**：
+  + 五层CNN+三层全连接，输入图片直接输出油门
+
+**NAVREN-RL: Learning to fly in real environment via end-to-end deep reinforcement learning using monocular images**：
+  + 在真实世界中仅依靠图像学习，DDQN算法
+  + 控制量简单，仅有前进0.25m、左转45°、右转45°
+  + 不存在真实信息，所以奖励也通过st、st+1两帧图像从图像生成深度图，然后生成奖励，奖励为前左右三块区域最近距离计算值
+    + 论文：Deeper Depth Prediction with Fully Convolutional Residual Networks（https://arxiv.org/abs/1606.00373）
+      + 据说前向传播一次不到60ms
+  + Q网络是AlexNet，五层卷积+三层全连接
+    + AlexNet:ImageNet Classification with Deep Convolutional Neural Networks
+  + 对Q值做clip
+
+**Target-driven Visual Navigation in Indoor Scenes using Deep Reinforcement Learning**：
+  + 在输入策略中加入了目标（从某个位置、某个角度拍摄的图像）
+  + 目标与状态为同样大小rgb图，分别经过共享参数的ResNet-50（截断softmax）+512维全连接后生成两个512维特征向量，再融合经mlp生成四个动作Q值
+
+**Learning Monocular Reactive UAV Control in Cluttered Natural Environments**：
+  + 特征计算在图像中的方形窗口上进行，相邻窗口之间有 50% 的重叠，所有窗口的特征向量最终被拼接成一个单一的特征向量，作为控制器输入。
+  + 15x7 的离散化（x方向15个窗口，y方向7个窗口）在320×240的图片上效果很好
+  + 特征提取策略：
+    + Radon 特征 (30 维)
+      + Radon 变换通过沿着图像中离散的直线集合对像素值进行求和来计算。它将图像中的点变换为参数空间中的线，常用于检测图像中的直线和边缘。
+      + 将Radon变换结果离散化为15x15个bin（离散的参数空间）。对于每个角度𝜃，记录对应线积分最高的两个值。
+      + 编码了图像中强边缘的方向，有助于捕获图像的整体结构和方向信息。
+    + 结构张量统计 (15 维)
+      + 结构张量是一个局部描述子，用于分析图像的局部纹理和方向信息。它能捕捉像素邻域内的梯度信息，从而识别边缘和角点。
+      + 在每个窗口内的每个点计算结构张量，并使用其两个特征向量之间的角度来填充一个15个bin的直方图。对应的特征值则累积到这些bin中。
+      + 与Radon变换不同，结构张量提供更局部的纹理描述。结合Radon特征，它们共同捕捉了纹理梯度，而纹理梯度是单目深度估计的强有力线索：远处物体纹理变化缓慢，近处物体纹理变化剧烈。
+    + Laws’ Masks (8 维)
+      + Laws’ Masks 是一组用于编码图像纹理强度的小型卷积核。它们通过不同的滤波模式（如Level, Edge, Spot）来捕捉图像中的不同纹理特征。
+      + 使用六个由一维掩码（L-水平, E-边缘, S-点）两两组合而成的掩码。图像首先转换为YCrCb颜色空间。LL 掩码应用于所有三个通道（Y, Cr, Cb），而其余五个掩码（LE, LS, EL, ES, SL, SS）仅应用于亮度（Y）通道。对于每个窗口，记录每个掩码响应的平均绝对值。
+      + 提供不同尺度的纹理信息，进一步增强对图像局部结构的理解。
+    + 光流 (Optical Flow) (5 维)
+      + 光流测量图像中像素随时间变化的运动
+      + 计算稠密光流（图像中每个像素的运动向量），并提取流幅度的最小值和最大值、平均流值、以及x和y方向的标准差。由于光流计算可能存在误差，他们还记录了光流的熵作为质量度量。
+      + 光流是深度估计的另一个重要线索，因为距离相机更近的物体通常会产生更大的光流幅度。它提供了无人机相对于环境中动态或静态物体的运动信息
+  
+  **Learning Agile Flights through Narrow Gaps with Varying Angles using Onboard Sensing**：
+    +
