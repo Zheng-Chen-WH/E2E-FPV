@@ -83,7 +83,7 @@ git clone <URL> .
 
 ## 3. 日常协作
 1. 在本地文件夹下启动终端（ubuntu）或git bash（windows）
-2. 拉取最新更改：```git pull```，将远程仓库的更改下载到你的本地仓库，并尝试合并它们
+2. 拉取最新更改：```git pull github master```，将远程仓库的更改下载到你的本地仓库，并尝试合并它们
     + ```git fetch```：拉取代码变更但不合并，将远程分支的最新状态下载到 ```origin/<branch_name>```，可以通过```git log origin/master```查看更改
     + ```git merge```：合并远程代码更改，```git merge origin/master```
 3. 查看文件更改状态：```git status```
