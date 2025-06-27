@@ -1,5 +1,5 @@
 import torch
-from timesformer_pytorch import TimeSformer
+# from timesformer_pytorch import TimeSformer
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
@@ -299,64 +299,3 @@ class QNetwork(nn.Module):
         x1 = self.Q_network_1(xu)
         x2 = self.Q_network_2(xu)
         return x1, x2
-
-# --- 示例使用与训练逻辑 ---
-if __name__ == '__main__':
-    # --- 模型配置 ---
-    RESNET_AUX_OUTPUTS = 6      # 预测6个位姿参数 (x, y, z, roll, pitch, yaw)
-    EXTERNAL_DYNAMIC_FEATS = 3  # 输入3个外部动态读数 (e.g., from IMU)
-    GRU_HIDDEN_DIM = 512
-    GRU_AUX_OUTPUTS = 6         # 预测6个速度/角速度参数 (vx, vy, vz, wx, wy, wz)
-    FINAL_CLASSIFICATION_CLASSES = 3 # 假设最终任务是3分类 (静止, 行人, 车辆)
-
-    # --- 模拟数据 ---
-    BATCH_SIZE = 4
-    SEQ_LENGTH = 10
-    
-    mock_images = torch.randn(BATCH_SIZE, SEQ_LENGTH, 3, 224, 224)
-    mock_dynamics = torch.randn(BATCH_SIZE, SEQ_LENGTH, EXTERNAL_DYNAMIC_FEATS)
-    
-    # 模拟真实标签
-    mock_pose_labels = torch.randn(BATCH_SIZE, SEQ_LENGTH, RESNET_AUX_OUTPUTS)
-    mock_velocity_labels = torch.randn(BATCH_SIZE, SEQ_LENGTH, GRU_AUX_OUTPUTS)
-    mock_final_labels = torch.randint(0, FINAL_CLASSIFICATION_CLASSES, (BATCH_SIZE,))
-    
-    # 为了演示最终任务，我们在模型外部加一个简单的分类头
-    final_classifier = nn.Linear(GRU_HIDDEN_DIM, FINAL_CLASSIFICATION_CLASSES)
-
-    # --- 训练逻辑演示 ---
-    model.train()
-    final_classifier.train()
-    
-    # 1. 模型前向传播，得到三个输出
-    final_vec, resnet_preds, gru_preds = model(mock_images, mock_dynamics)
-    final_classification_preds = final_classifier(final_vec)
-    
-    print(f"最终特征向量尺寸: {final_vec.shape}")
-    print(f"ResNet位姿预测尺寸: {resnet_preds.shape}")
-    print(f"GRU速度预测尺寸: {gru_preds.shape}")
-    print(f"最终分类预测尺寸: {final_classification_preds.shape}\n")
-
-    # 2. 定义多个损失函数
-    loss_fn_resnet_aux = nn.MSELoss()
-    loss_fn_gru_aux = nn.MSELoss()
-    loss_fn_final = nn.CrossEntropyLoss()
-
-    # 3. 计算所有损失
-    loss_resnet = loss_fn_resnet_aux(resnet_preds, mock_pose_labels)
-    loss_gru = loss_fn_gru_aux(gru_preds, mock_velocity_labels)
-    loss_final = loss_fn_final(final_classification_preds, mock_final_labels)
-    
-    # 4. 加权合并总损失
-    w_resnet, w_gru = 0.5, 0.5 # 权重是需要仔细调整的超参数
-    total_loss = loss_final + w_resnet * loss_resnet + w_gru * loss_gru
-    
-    # 5. 反向传播 (一次反向传播会计算所有部分的梯度)
-    # optimizer.zero_grad()
-    # total_loss.backward()
-    # optimizer.step()
-
-    print(f"最终任务损失 (CE): {loss_final.item():.4f}")
-    print(f"ResNet辅助损失 (MSE): {loss_resnet.item():.4f}")
-    print(f"GRU辅助损失 (MSE): {loss_gru.item():.4f}")
-    print(f"加权总损失: {total_loss.item():.4f}")

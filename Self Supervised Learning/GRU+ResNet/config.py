@@ -30,7 +30,7 @@ MPC_STATE_DIM=13
 # 神经网络与训练参数 
 PI_STATE_DIM = 15  # Pi网络状态:暂定之前三次PWM和目标位置
 Q_STATE_DIM = 27 # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
-RESNET_AUX_DIM = 9 # ResNet辅助头输出维度，相对下一目标的位置+6D连续表示姿态
+RESNET_AUX_DIM = 9 # ResNet辅助头输出维度，6D连续表示姿态+相对下一目标的位置
 GRU_AUX_DIM = 6 # GRU辅助头输出维度，相对下一目标的速度+3D角速度
 GRU_LAYER = 2 # GRU层数
 DROP_OUT = 0.3 # GRU的dropout概率
@@ -47,6 +47,11 @@ FIT_SCALER_SUBSET_SIZE = 2000  # 用于更新归一化参数的样本数
 NUM_TRANSFORMER_FRAMES = 4
 NUM_EPISODES = 1000  # 训练最大episode数
 WARM_UP = 10000 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
+AUX_LOSS_WEIGHT = 1.0 # 辅助头总损失权重
+POS_LOSS_WEIGHT = 0.1 # 相对位置损失权重
+ROT_LOSS_WEIGHT = 20.0  # 相对姿态损失权重
+VEL_LOSS_WEIGHT = 1.0  # 相对速度损失权重
+ANG_VEL_LOSS_WEIGHT = 20.0 # 相对角速度损失权重
 
 
 # 穿门任务专用参数

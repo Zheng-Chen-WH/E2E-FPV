@@ -3,7 +3,6 @@ import torch.optim as optim
 import config as cfg
 from env import env
 from CEM_MPC import CEM_MPC
-import datetime
 import numpy as np
 import itertools
 import torch.nn as nn
@@ -52,7 +51,12 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'door_frames':cfg.door_frames_names,
     'max_action':cfg.SCALED_CONTROL_MAX, # 放大网络输出倍数
     'min_action':cfg.SCALED_CONTROL_MIN,
-    'warm_up':cfg.WARM_UP # 学习率逐渐上升的预热阶段步数
+    'warm_up':cfg.WARM_UP, # 学习率逐渐上升的预热阶段步数
+    'aux_loss_weight': cfg.AUX_LOSS_WEIGHT, # 辅助头总损失权重
+    'pos_loss_weight':cfg.POS_LOSS_WEIGHT,  # 相对位置损失权重
+    'rot_loss_weight':cfg.ROT_LOSS_WEIGHT,  # 相对姿态损失权重
+    'vel_loss_weight':cfg.VEL_LOSS_WEIGHT,  # 相对速度损失权重
+    'ang_vel_loss_weight':cfg.ANG_VEL_LOSS_WEIGHT # 相对角速度损失权重
     }
 
 cem_hyperparams = {
