@@ -1,9 +1,3 @@
-<<<<<<< HEAD
-import numpy as np
-a = np.array([1.5, 1.5, 1.5, 1.4])
-b = 2 * (a - 1.0) / (2.0 - 1.0) - 1
-print(b)
-=======
 # 将四元数转成旋转矩阵
 import numpy as np
 def quaternions_to_rotation_matrices_np(quaternions):
@@ -44,4 +38,3 @@ def quaternions_to_rotation_matrices_np(quaternions):
 dot_6 = quaternions_to_rotation_matrices_np(np.array([0.707, 0.707, 0, 0]))
 print(dot_6)
 print(np.stack([dot_6,dot_6,dot_6]).shape)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb

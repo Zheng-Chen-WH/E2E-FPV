@@ -3,6 +3,7 @@ import torch
 import os
 from torchvision import transforms
 from PIL import Image
+import torch.nn.functional as F
 
 def create_log_gaussian(mean, log_std, t):
     quadratic = -((0.5 * (t - mean) / (log_std.exp())).pow(2))
@@ -49,8 +50,6 @@ def img_load(file_names):
     input_sequence = input_sequence.unsqueeze(0)  # 输出维度: (1, 4, 3, 256, 144)
     return img_sequence #返回处理好的张量
 
-<<<<<<< HEAD
-=======
 def map_value(x, a, b, c, d):
     """
     将值 x 从范围 [a, b] 映射到范围 [c, d]。
@@ -70,42 +69,21 @@ def map_value(x, a, b, c, d):
     mapped_value = c + (d - c) * ((x - a) / (b - a))
     return mapped_value
 
-import torch
-import torch.nn.functional as F
-
-def weighted_mse_loss(y_pred, y_true):
-  """
-  计算加权均方误差 (Weighted MSE)。
-  权重是根据真实值与批次内真实值均值的距离动态生成的。
-  这会惩罚那些远离批次均值的样本，鼓励模型学习数据的完整分布，
-  而不是仅仅输出一个全局的平均值。
-
-  Args:
-    y_pred (torch.Tensor): 模型的预测值。
-    y_true (torch.Tensor): 专家提供的真实值。
-
-  Returns:
-    torch.Tensor: 一个标量的损失值。
-  """
-  # 1. 动态计算批次内专家动作的均值
-  # 使用 .detach() 来确保这个计算不会成为反向传播图的一部分
-  with torch.no_grad():
-    batch_mean = torch.mean(y_true)
-  
-    # 2. 计算每个样本的权重
-    # 专家动作离批次均值越远，权重越大。
-    # 加1.0是为了保证基础权重至少为1。
-    weights = 1.0 + torch.abs(y_true - batch_mean)
-
-  # 3. 计算每个样本原始的MSE
-  per_sample_mse = F.mse_loss(y_pred, y_true, reduction='none')
-
-  # 4. 应用权重并计算最终的平均损失
-  weighted_mse = per_sample_mse * weights
-  final_loss = torch.mean(weighted_mse)
-  
-  return final_loss
+def six_d_to_rot_mat(pred_6d):
+        """
+        将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
+        这个函数不知道也不关心 N 是 B 还是 B*T，它只是独立处理N个样本。
+        """
+        # 提取列向量
+        a1 = pred_6d[..., 0:3]
+        a2 = pred_6d[..., 3:6]
+        # 格拉姆-施密特正交化
+        b1 = F.normalize(a1, dim=-1)
+        dot_product = torch.sum(b1 * a2, dim=-1, keepdim=True)
+        a2_orthogonal = a2 - dot_product * b1
+        b2 = F.normalize(a2_orthogonal, dim=-1)
+        b3 = torch.cross(b1, b2, dim=-1)
+        return torch.stack([b1, b2, b3], dim=-1)
 
 
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
     

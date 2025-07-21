@@ -14,21 +14,12 @@ POS_TOLERANCE = 1  # 判定抵达目标的位置误差限 (meters)
 VELO_TOLERANCE = 1  # 判定抵达目标的速度误差限 (m/s)
 CONTROL_MAX = 0.66 # 最大控制指令范围（simpleflight为速度范围，PX4为加速度，现在是油门信号）
 CONTROL_MIN = 0.62 # 油门信号下限
-<<<<<<< HEAD
-SCALED_CONTROL_MAX = 5.0 # 网络输出信号放大以便增大损失函数
-SCALED_CONTROL_MIN = -5.0
-
-# CEM参数
-PREDICTION_HORIZON = 5  # MPC预测长度 (N_steps)
-N_SAMPLES_CEM = 200000  # 每个CEM采样过程采样数量
-=======
 SCALED_CONTROL_MAX = 10.0 # 网络输出信号放大以便增大损失函数;试一下非对称缩放
 SCALED_CONTROL_MIN = 0.0
 
 # CEM参数
 PREDICTION_HORIZON = 5  # MPC预测长度 (N_steps)
 N_SAMPLES_CEM = 100000  # 每个CEM采样过程采样数量
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 N_ELITES_CEM = int(0.1 * N_SAMPLES_CEM)  # CEM精英群体数量
 N_ITER_CEM = 1  # 每个MPC优化步的CEM迭代轮数
 INITIAL_STD_CEM = CONTROL_MAX  # CEM采样初始标准差，给大一点利于探索
@@ -41,18 +32,6 @@ PI_STATE_DIM = 15  # Pi网络状态:暂定之前三次PWM和目标位置
 Q_STATE_DIM = 27 # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
 RESNET_AUX_DIM = 9 # ResNet辅助头输出维度，6D连续表示姿态+相对下一目标的位置
 GRU_AUX_DIM = 6 # GRU辅助头输出维度，相对下一目标的速度+3D角速度
-<<<<<<< HEAD
-GRU_LAYER = 2 # GRU层数
-DROP_OUT = 0.3 # GRU的dropout概率
-ACTION_DIM = 4  # 动作向量维度，4个PWM
-NN_HIDDEN_SIZE = [128,128,128, 64]  # 隐藏层大小
-LEARNING_RATE = 1e-4  # 学习率
-BUFFER_SIZE = 100000  # buffer大小
-BATCH_SIZE = 128  # 训练batch size
-NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
-MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
-EPISODE_EXPLORE = 5  # 随机探索episode数
-=======
 GRU_LAYER = 1 # GRU层数
 DROP_OUT = 0.3 # GRU的dropout概率
 ACTION_DIM = 4  # 动作向量维度，4个PWM
@@ -63,27 +42,18 @@ BATCH_SIZE = 256  # 训练batch size
 NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
 MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
 EPISODE_EXPLORE = 3  # 随机探索episode数
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 SCALER_REFIT_FREQUENCY = 10  # 归一化参数更新频率
 FIT_SCALER_SUBSET_SIZE = 2000  # 用于更新归一化参数的样本数
 NUM_TRANSFORMER_FRAMES = 4
 NUM_EPISODES = 1000  # 训练最大episode数
-<<<<<<< HEAD
-WARM_UP = 10000 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
-AUX_LOSS_WEIGHT = 1.0 # 辅助头总损失权重
-=======
 WARM_UP = 100 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
 AUX_LOSS_WEIGHT = 0.1 # 辅助头总损失权重
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 POS_LOSS_WEIGHT = 0.1 # 相对位置损失权重
 ROT_LOSS_WEIGHT = 20.0  # 相对姿态损失权重
 VEL_LOSS_WEIGHT = 1.0  # 相对速度损失权重
 ANG_VEL_LOSS_WEIGHT = 20.0 # 相对角速度损失权重
-<<<<<<< HEAD
-=======
 DAGGER_LOSS_WEIGHT = 10 # DAGGER损失权重
-EVAL_FREQ = 1 #训练过程中每多少个epoch之后进行测试
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
+EVAL_FREQ = 20 #训练过程中每多少个epoch之后进行测试
 
 
 # 穿门任务专用参数

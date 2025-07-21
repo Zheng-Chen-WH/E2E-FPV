@@ -4,7 +4,10 @@ import time
 import math
 import config as cfg
 from airsim_env import AirSimEnv
+<<<<<<< HEAD
 from analytical_model import SimpleFlightDynamics
+=======
+>>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
 # 环境初始化
 # 初始化

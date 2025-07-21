@@ -49,8 +49,6 @@ def img_load(file_names):
     input_sequence = input_sequence.unsqueeze(0)  # 输出维度: (1, 4, 3, 256, 144)
     return img_sequence #返回处理好的张量
 
-<<<<<<< HEAD
-=======
 def map_value(x, a, b, c, d):
     """
     将值 x 从范围 [a, b] 映射到范围 [c, d]。
@@ -87,18 +85,18 @@ def weighted_mse_loss(y_pred, y_true):
   Returns:
     torch.Tensor: 一个标量的损失值。
   """
-  # 1. 动态计算批次内专家动作的均值
+  # 动态计算批次内专家动作的均值
   # 使用 .detach() 来确保这个计算不会成为反向传播图的一部分
   with torch.no_grad():
     batch_mean = torch.mean(y_true)
   
-    # 2. 计算每个样本的权重
+    # 计算每个样本的权重
     # 专家动作离批次均值越远，权重越大。
     # 加1.0是为了保证基础权重至少为1。
     weights = 1.0 + torch.abs(y_true - batch_mean)
 
   # 3. 计算每个样本原始的MSE
-  per_sample_mse = F.mse_loss(y_pred, y_true, reduction='none')
+  per_sample_mse = F.mse_loss(y_pred, y_true, reduction='none') # reduction='none'，返回的是每个样本的损失，而不是整体损失的平均值或总和。
 
   # 4. 应用权重并计算最终的平均损失
   weighted_mse = per_sample_mse * weights
@@ -106,6 +104,41 @@ def weighted_mse_loss(y_pred, y_true):
   
   return final_loss
 
+def conversion(control_signal):
+    rotor_turning_directions = torch.tensor([1.0, 1.0, -1.0, -1.0], device = torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    total_thrust = -torch.sum(control_signal, dim=1)  # 总推力
+    rotor_torques_b = control_signal * rotor_turning_directions.unsqueeze(0) # (K, 4)
 
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
+    T_FR = control_signal[:, 0]; T_RL = control_signal[:, 1]
+    T_FL = control_signal[:, 2]; T_RR = control_signal[:, 3]
+    tau_x_b = T_FL + T_RL - T_FR - T_RR
+    tau_y_b = T_FR + T_FL - T_RL - T_RR
+    tau_z_b = torch.sum(rotor_torques_b, dim=1)
+    return total_thrust, tau_x_b, tau_y_b, tau_z_b
+
+def physics_MSE(y_pred, y_true, weighted = False):
+    weight = 1.0
+    with torch.no_grad():
+        # 我们可以计算每个动作的“幅度”来判断其“独特性”。
+        # 4个电机PWM的平均值是衡量动作幅度的一个很好的指标。
+        batch_mean_by_sample = torch.mean(y_true,dim=1) # 形状: [B]
+        batch_mean = torch.mean(batch_mean_by_sample) # 标量
+        # 专家行为远离批次平均值的样本会获得更高的权重。
+        importance_weights = 1.0 + torch.abs(batch_mean_by_sample - batch_mean) # 形状: [B]
+
+    thrust_pred, tau_x_pred, tau_y_pred, tau_z_pred = conversion(y_pred)
+    thrust_true, tau_x_true, tau_y_true, tau_z_true = conversion(y_true)
+    thrust_loss =  F.mse_loss(thrust_pred, thrust_true, reduction='none') 
+    # print(thrust_loss.shape)
+    # print(importance_weights.shape)
+    tau_loss = F.mse_loss(tau_x_pred, tau_x_true, reduction='none') + F.mse_loss(tau_y_pred, tau_y_true, reduction='none') +\
+                                    0.5 * F.mse_loss(tau_z_pred, tau_z_true, reduction='none')
+    # 应用重要性权重并求均值得到最终损失
+    
+    weighted_thrust_loss = torch.mean(thrust_loss * importance_weights)
+    weighted_tau_loss = torch.mean(tau_loss * importance_weights)
+    final_loss = weight * weighted_thrust_loss + weighted_tau_loss
+    # print(f"thrust:{F.mse_loss(thrust_pred, thrust_true)}, tau:{(F.mse_loss(tau_x_pred, tau_x_true) + F.mse_loss(tau_y_pred, tau_y_true) + F.mse_loss(tau_z_pred, tau_z_true))}")
+    # print(f"tau_x:{F.mse_loss(tau_x_pred, tau_x_true)}, tau_y:{F.mse_loss(tau_y_pred, tau_y_true)} ,tau_z:{F.mse_loss(tau_z_pred, tau_z_true)}")
+    return final_loss
     

@@ -2,12 +2,9 @@ import os
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam, AdamW
-from utils import soft_update, hard_update
-from model import GaussianPolicy, QNetwork
-<<<<<<< HEAD
-=======
-import time
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
+from utils import soft_update, hard_update, weighted_mse_loss, physics_MSE
+from model import GaussianPolicy, QNetwork, init_weights
+import torch.nn as nn
 
 class SAC(object):
     def __init__(self, args):
@@ -24,10 +21,7 @@ class SAC(object):
         self.rot_loss_weight = args['rot_loss_weight']
         self.vel_loss_weight = args['vel_loss_weight']
         self.ang_vel_loss_weight = args['ang_vel_loss_weight']
-<<<<<<< HEAD
-=======
         self.dagger_weight = args['dagger_loss_weight']
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         self.device = torch.device("cuda" if args['cuda'] else "cpu")
 
@@ -49,13 +43,17 @@ class SAC(object):
                                      args['activation'], args['max_action'], args['min_action'],
                                      args['resnet_aux_dim'], args['gru_aux_dim'],
                                      args['gru_layer'], args['drop_out']).to(self.device)
+        self.policy.apply(init_weights)  
+        nn.init.constant_(self.policy.log_std_layer.weight, 0)
+        nn.init.constant_(self.policy.log_std_layer.bias, 0)
+        nn.init.uniform_(self.policy.mu_layer.weight, -1.0, 1.0) 
         self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01) # Gemini说transformer适合用
+        self.hidden_state = None
+    
+    def reset(self): # 为了发挥GRU时序能力，现在每次训练前要重置GRU的隐藏状态
+        self.hidden_state = None
 
-<<<<<<< HEAD
-    def six_d_to_rot_mat(pred_6d):
-=======
     def six_d_to_rot_mat(self, pred_6d):
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         """
         将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
         这个函数不知道也不关心 N 是 B 还是 B*T，它只是独立处理N个样本。
@@ -76,11 +74,7 @@ class SAC(object):
         从DAgger取数据计算模仿学习loss
         """
         # 切分预测值
-<<<<<<< HEAD
-        # resnet输出结果(B, T, 9)
-=======
         # resnet输出结果(B, T, 9)normalized_input
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         pred_pos = resnet_output[..., 0:3] # 切出相对位置
         pred_rot_6d = resnet_output[..., 3:9] # 切出相对姿态
 
@@ -98,7 +92,10 @@ class SAC(object):
         gt_rot_mat_flat = gt_rot_mat.reshape(-1, 3, 3)
         R_pred_flat = self.six_d_to_rot_mat(pred_rot_6d_flat)
         loss_rot = F.mse_loss(R_pred_flat, gt_rot_mat_flat)
-
+        # print(f"pred_pos:{pred_pos[0:5]}, true_pos:{gt_pos[0:5]}")
+        # print(f"pred_rot:{R_pred_flat[0:5]}, true_rot:{gt_rot_mat_flat[0:5]}")
+        # print(f"pred_vel:{pred_vel[0:5]}, true_vel:{gt_vel[0:5]}")
+        # print(f"pred_ang:{pred_ang_vel[0:5]}, true_ang:{gt_ang_vel[0:5]}")
         # 加权求和
         total_loss = (self.pos_loss_weight * loss_pos +
                   self.rot_loss_weight * loss_rot +
@@ -111,47 +108,29 @@ class SAC(object):
         img_sequence=img_sequence.to(self.device)
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         if evaluate is False:
-<<<<<<< HEAD
-            action, _, _, _, _, _, _ = self.policy.sample(img_sequence, state)
+            action, _, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state)
         else:
-            _, _, action, _, _, _, _ = self.policy.sample(img_sequence, state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
-=======
-            action, _, _, _, _ = self.policy.sample(img_sequence, state)
-        else:
-            _, _, action, _, _ = self.policy.sample(img_sequence, state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
+            _, _, action, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
+        # 更新Agent的隐藏状态，为下一次决策做准备
+        self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
         return action.detach().cpu().numpy()[0]
 
-    def update_parameters(self, rl_memory, dagger_memory, batch_size, updates):
-        rl_pi_img_batch,rl_pi_state_batch, rl_q_state_batch, rl_action_batch, rl_reward_batch, rl_next_pi_img_batch, \
-            rl_next_pi_state_batch, rl_next_q_state_batch, rl_done_batch, rl_goal_batch,\
+    def update_parameters(self, rl_memory, dagger_memory, recent_memory, batch_size, updates):
+        rl_pi_img_batch, rl_action_batch, rl_goal_batch,\
                   rl_resnet_position_batch, rl_resnet_attitude_batch, rl_gru_velocity_batch, rl_gru_angular_batch  = rl_memory.sample(batch_size=batch_size)
         # print("pi_img_batch shape:", pi_img_batch.shape)
         # print("next_pi_img_batch shape:", next_pi_img_batch.shape)
-<<<<<<< HEAD
-=======
         # time_start = time.time()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         rl_pi_img_batch = torch.FloatTensor(rl_pi_img_batch).to(self.device)
-        rl_pi_state_batch = torch.FloatTensor(rl_pi_state_batch).to(self.device)
-        rl_q_state_batch = torch.FloatTensor(rl_q_state_batch).to(self.device)
         rl_action_batch = torch.FloatTensor(rl_action_batch).to(self.device)
-        rl_reward_batch = torch.FloatTensor(rl_reward_batch).to(self.device).unsqueeze(1)
-        rl_next_pi_img_batch = torch.FloatTensor(rl_next_pi_img_batch).to(self.device)
-        rl_next_pi_state_batch = torch.FloatTensor(rl_next_pi_state_batch).to(self.device)
-        rl_next_q_state_batch = torch.FloatTensor(rl_next_q_state_batch).to(self.device)
-        rl_done_batch = torch.FloatTensor(rl_done_batch).to(self.device).unsqueeze(1)
         rl_goal_batch = torch.FloatTensor(rl_goal_batch).to(self.device)
 
         rl_resnet_position_batch = torch.FloatTensor(rl_resnet_position_batch).to(self.device)
         rl_resnet_attitude_batch = torch.FloatTensor(rl_resnet_attitude_batch).to(self.device) # 需要是(B, T, 3, 3)大小
         rl_gru_velocity_batch = torch.FloatTensor(rl_gru_velocity_batch).to(self.device)
         rl_gru_angular_batch = torch.FloatTensor(rl_gru_angular_batch).to(self.device)
-<<<<<<< HEAD
-=======
         # time_end = time.time()
         # print(f"sample time:{time_end - time_start}")
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         
         if updates < self.warm_up_steps:
             # 计算当前步的学习率：从0线性增长到 base_lr
@@ -165,55 +144,66 @@ class SAC(object):
             for param_group in self.policy_optim.param_groups:
                 param_group['lr'] = current_lr
 
-        # critic更新
-<<<<<<< HEAD
-=======
-        # time_start = time.time()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
-        with torch.no_grad():
-            next_state_action, next_state_log_pi, _, _, _ = self.policy.sample(rl_next_pi_img_batch,(torch.cat([rl_next_pi_state_batch, rl_goal_batch],dim=1))) #policy网络算出来的action
-            qf1_next_target, qf2_next_target = self.critic_target(rl_next_q_state_batch, next_state_action) #target算出来的q值
-            min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) #选择较小的Q值
-            target_q_value = rl_reward_batch + (1 - rl_done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi) #原论文(2),(3)式
-            # 上式为bellman backup,备份一个状态 或是状态动作对，是贝尔曼方程的右边，即reward+next value
-        qf1, qf2 = self.critic(rl_next_q_state_batch, next_state_action)  # Two Q-functions to mitigate positive bias in the policy improvement step
-        qf1_loss = F.mse_loss(qf1, target_q_value)  # MSEloss是对一个batch中所有样本的loss取差值平方后求平均
-        qf2_loss = F.mse_loss(qf2, target_q_value)  # JQ = ��(st,at)~D[0.5(Q1(st,at) - r(st,at) - γ(��st+1~p[V(st+1)]))^2]
-        qf_loss = qf1_loss + qf2_loss
-        self.critic_optim.zero_grad()
-        qf_loss.backward() #这里的qf_loss保留了梯度信息而非简单相加，因此(loss1+loss2)整体对两个网络做梯度反向传播时，loss2对q1网络的梯度为0
-        self.critic_optim.step()
-<<<<<<< HEAD
-
-        # policy更新
-=======
-        # time_end = time.time()
-        # print(f"Q update time:{time_end-time_start}")
+        # # critic更新
+        # # time_start = time.time()
+        # with torch.no_grad():
+        #     next_state_action, next_state_log_pi, _, _, _ = self.policy.sample(rl_next_pi_img_batch,(torch.cat([rl_next_pi_state_batch, rl_goal_batch],dim=1))) #policy网络算出来的action
+        #     qf1_next_target, qf2_next_target = self.critic_target(rl_next_q_state_batch, next_state_action) #target算出来的q值
+        #     min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) #选择较小的Q值
+        #     target_q_value = rl_reward_batch + (1 - rl_done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi) #原论文(2),(3)式
+        #     # 上式为bellman backup,备份一个状态 或是状态动作对，是贝尔曼方程的右边，即reward+next value
+        # qf1, qf2 = self.critic(rl_next_q_state_batch, next_state_action)  # Two Q-functions to mitigate positive bias in the policy improvement step
+        # qf1_loss = F.mse_loss(qf1, target_q_value)  # MSEloss是对一个batch中所有样本的loss取差值平方后求平均
+        # qf2_loss = F.mse_loss(qf2, target_q_value)  # JQ = ��(st,at)~D[0.5(Q1(st,at) - r(st,at) - γ(��st+1~p[V(st+1)]))^2]
+        # qf_loss = qf1_loss + qf2_loss
+        # self.critic_optim.zero_grad()
+        # qf_loss.backward() #这里的qf_loss保留了梯度信息而非简单相加，因此(loss1+loss2)整体对两个网络做梯度反向传播时，loss2对q1网络的梯度为0
+        # self.critic_optim.step()
+        # # time_end = time.time()
+        # # print(f"Q update time:{time_end-time_start}")
 
         # policy更新
         # time_start = time.time()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
-        dagger_pi_img_batch, dagger_pi_state_batch, dagger_action_batch, dagger_goal_batch,\
-              dagger_resnet_position_batch, dagger_resnet_attitude_batch, dagger_gru_velocity_batch, dagger_gru_angular_batch = dagger_memory.sample(batch_size=batch_size)
-        dagger_pi_img_batch = torch.FloatTensor(dagger_pi_img_batch).to(self.device)
-        dagger_pi_state_batch = torch.FloatTensor(dagger_pi_state_batch).to(self.device)
-        dagger_action_batch = torch.FloatTensor(dagger_action_batch).to(self.device)
-        dagger_goal_batch = torch.FloatTensor(dagger_goal_batch).to(self.device)
-        dagger_resnet_position_batch = torch.FloatTensor(dagger_resnet_position_batch).to(self.device)
-        dagger_resnet_attitude_batch = torch.FloatTensor(dagger_resnet_attitude_batch).to(self.device) # 需要是(B, T, 3, 3)大小
-        dagger_gru_velocity_batch = torch.FloatTensor(dagger_gru_velocity_batch).to(self.device)
-        dagger_gru_angular_batch = torch.FloatTensor(dagger_gru_angular_batch).to(self.device)
+        dagger_pi_img_batch, dagger_action_batch, dagger_goal_batch,\
+              dagger_resnet_position_batch, dagger_resnet_attitude_batch, dagger_gru_velocity_batch, dagger_gru_angular_batch = dagger_memory.sample(batch_size=int(batch_size/2))
+        dagger_pi_img_batch = torch.FloatTensor(dagger_pi_img_batch)
+        dagger_action_batch = torch.FloatTensor(dagger_action_batch)
+        dagger_goal_batch = torch.FloatTensor(dagger_goal_batch)
+        dagger_resnet_position_batch = torch.FloatTensor(dagger_resnet_position_batch)
+        dagger_resnet_attitude_batch = torch.FloatTensor(dagger_resnet_attitude_batch) # 需要是(B, T, 3, 3)大小
+        dagger_gru_velocity_batch = torch.FloatTensor(dagger_gru_velocity_batch)
+        dagger_gru_angular_batch = torch.FloatTensor(dagger_gru_angular_batch)
+
+        recent_pi_img_batch, recent_action_batch, recent_goal_batch,\
+              recent_resnet_position_batch, recent_resnet_attitude_batch, recent_gru_velocity_batch, recent_gru_angular_batch = recent_memory.sample(batch_size=int(batch_size/2))
+        recent_pi_img_batch = torch.FloatTensor(recent_pi_img_batch)
+        recent_action_batch = torch.FloatTensor(recent_action_batch)
+        recent_goal_batch = torch.FloatTensor(recent_goal_batch)
+        recent_resnet_position_batch = torch.FloatTensor(recent_resnet_position_batch)
+        recent_resnet_attitude_batch = torch.FloatTensor(recent_resnet_attitude_batch) # 需要是(B, T, 3, 3)大小
+        # print(recent_resnet_attitude_batch.shape)
+        recent_gru_velocity_batch = torch.FloatTensor(recent_gru_velocity_batch)
+        recent_gru_angular_batch = torch.FloatTensor(recent_gru_angular_batch)
+
+        dagger_pi_img_batch = torch.cat((dagger_pi_img_batch,recent_pi_img_batch),dim=0).to(self.device)
+        dagger_action_batch = torch.cat((dagger_action_batch,recent_action_batch),dim=0).to(self.device)
+        dagger_goal_batch = torch.cat((dagger_goal_batch,recent_goal_batch),dim=0).to(self.device)
+        dagger_resnet_position_batch = torch.cat((dagger_resnet_position_batch,recent_resnet_position_batch),dim=0).to(self.device)
+        dagger_resnet_attitude_batch = torch.cat((dagger_resnet_attitude_batch,recent_resnet_attitude_batch),dim=0).to(self.device) # 需要是(B, T, 3, 3)大小
+        dagger_gru_velocity_batch = torch.cat((dagger_gru_velocity_batch,recent_gru_velocity_batch),dim=0).to(self.device)
+        dagger_gru_angular_batch = torch.cat((dagger_gru_angular_batch,recent_gru_angular_batch),dim=0).to(self.device)
         
-        rl_pi, rl_log_pi, _, rl_resnet_output, rl_gru_output = self.policy.sample(rl_pi_img_batch, torch.cat([rl_pi_state_batch, rl_goal_batch],dim=1))
-        dagger_pi, _, _, dagger_resnet_output, dagger_gru_output = self.policy.sample(dagger_pi_img_batch, torch.cat([dagger_pi_state_batch, dagger_goal_batch],dim=1))
+        rl_pi, rl_log_pi, _, rl_resnet_output, rl_gru_output, _ = self.policy.sample(rl_pi_img_batch, rl_goal_batch)
+        dagger_pi, _, _, dagger_resnet_output, dagger_gru_output, _ = self.policy.sample(dagger_pi_img_batch, dagger_goal_batch)
         # qf1_pi, qf2_pi = self.critic(torch.cat([q_state_batch, goal_batch],dim=1), pi)
         # min_qf_pi = torch.min(qf1_pi, qf2_pi)
 
         # policy_loss = ((self.alpha * log_pi) - min_qf_pi).mean() # Jπ = ��st∼D,εt∼N[α * logπ(f(εt;st)|st) − Q(st,f(εt;st))] 原论文式(7)
         
         # 主动作损失
-        rl_policy_loss = F.mse_loss(rl_pi, rl_action_batch)
-        dagger_policy_loss = F.mse_loss(dagger_pi, dagger_action_batch)
+        # print(f"pred_action:{rl_pi[0:5]}, true_action:{rl_action_batch[0:5]}")
+        rl_policy_loss = physics_MSE(rl_pi, rl_action_batch)
+        dagger_policy_loss = physics_MSE(dagger_pi, dagger_action_batch)
 
         # 辅助头损失
         rl_aux_loss = self.aux_loss(
@@ -225,10 +215,6 @@ class SAC(object):
         dagger_gru_velocity_batch, dagger_gru_angular_batch)
 
         # 总损失
-<<<<<<< HEAD
-        total_policy_loss = self.aux_loss_weight * (rl_aux_loss + dagger_aux_loss) + (rl_policy_loss + dagger_policy_loss)
-        
-=======
         # print(f"aux loss:{self.aux_loss_weight * (rl_aux_loss + self.dagger_weight * dagger_aux_loss)}, main loss:{(rl_policy_loss + self.dagger_weight * dagger_policy_loss)}")
         print(f"rl policy loss:{torch.round(rl_policy_loss , decimals = 4)}, dagg policy loss:{torch.round(dagger_policy_loss, decimals = 4)}")
         total_policy_loss = self.aux_loss_weight * (rl_aux_loss + self.dagger_weight * dagger_aux_loss) + (rl_policy_loss + self.dagger_weight * dagger_policy_loss)
@@ -237,7 +223,6 @@ class SAC(object):
         # if updates % 20 == 0:
             # print(f"rl action loss:{rl_policy_loss}, dagger action loss:{dagger_policy_loss}\nrl_aux_loss:{rl_aux_loss},dagger_aux_loss:{dagger_aux_loss}")
 
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # 加权处理损失
         self.policy_optim.zero_grad()
         total_policy_loss.backward()
@@ -246,11 +231,8 @@ class SAC(object):
         #         # 打印梯度范数，可以看到梯度大小
         #         print(f"{name}: Grad Norm = {param.grad.norm().item()}")
         self.policy_optim.step()
-<<<<<<< HEAD
-=======
         # time_end = time.time()
         # print(f"policy update time:{time_end - time_start}")
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         # 预训练阶段固定alpha，这个公式不适用模仿学习
         if self.automatic_entropy_tuning:
@@ -268,7 +250,7 @@ class SAC(object):
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau) #对目标网络软更新
 
-        return qf1_loss.item(), qf2_loss.item(), total_policy_loss.item(), alpha_loss.item(), alpha_tlogs.item()
+        return total_policy_loss.item(), alpha_loss.item(), alpha_tlogs.item()
 
     # Save model parameters
     def save_model(self, filename="master"):
@@ -278,19 +260,16 @@ class SAC(object):
         ckpt_path = filename + "_model.pt"
         print('Saving models to {}'.format(ckpt_path))
         torch.save({'policy_state_dict': self.policy.state_dict(),
-                    'critic_state_dict': self.critic.state_dict(),
-                    'critic_target_state_dict': self.critic_target.state_dict(),
-                    'critic_optimizer_state_dict': self.critic_optim.state_dict(),
                     'policy_optimizer_state_dict': self.policy_optim.state_dict()}, ckpt_path)
 
     # Load model parameters
     def load_model(self, file_name, evaluate=False):
         if file_name is not None:
-            checkpoint = torch.load(file_name + "_model.pt")
+            checkpoint = torch.load(file_name + "_model.pt", weights_only=False)
             self.policy.load_state_dict(checkpoint['policy_state_dict'])
-            self.critic.load_state_dict(checkpoint['critic_state_dict'])
-            self.critic_target.load_state_dict(checkpoint['critic_target_state_dict'])
-            self.critic_optim.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+            # self.critic.load_state_dict(checkpoint['critic_state_dict'])
+            # self.critic_target.load_state_dict(checkpoint['critic_target_state_dict'])
+            # self.critic_optim.load_state_dict(checkpoint['critic_optimizer_state_dict'])
             self.policy_optim.load_state_dict(checkpoint['policy_optimizer_state_dict'])
             if evaluate:
                 self.policy.eval()

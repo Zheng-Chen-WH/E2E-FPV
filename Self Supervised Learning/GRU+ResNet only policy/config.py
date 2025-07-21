@@ -4,7 +4,7 @@ import torch.nn as nn
 
 # 仿真与通用参数
 DT = 0.10  # MPC轨迹每步步长
-img_time = 0.02
+img_time = 0.025
 """在GPU并行生成轨迹处理之后N=100时计算时间减少到了0.005s以下
    N=1000时为0.005-0.007s
    N=10000时为0.009s左右
@@ -14,21 +14,12 @@ POS_TOLERANCE = 1  # 判定抵达目标的位置误差限 (meters)
 VELO_TOLERANCE = 1  # 判定抵达目标的速度误差限 (m/s)
 CONTROL_MAX = 0.66 # 最大控制指令范围（simpleflight为速度范围，PX4为加速度，现在是油门信号）
 CONTROL_MIN = 0.62 # 油门信号下限
-<<<<<<< HEAD
-SCALED_CONTROL_MAX = 5.0 # 网络输出信号放大以便增大损失函数
-SCALED_CONTROL_MIN = -5.0
-
-# CEM参数
-PREDICTION_HORIZON = 5  # MPC预测长度 (N_steps)
-N_SAMPLES_CEM = 200000  # 每个CEM采样过程采样数量
-=======
-SCALED_CONTROL_MAX = 10.0 # 网络输出信号放大以便增大损失函数;试一下非对称缩放
-SCALED_CONTROL_MIN = 0.0
+SCALED_CONTROL_MAX = 10. # 网络输出信号放大以便增大损失函数;试一下非对称缩放
+SCALED_CONTROL_MIN = 0.
 
 # CEM参数
 PREDICTION_HORIZON = 5  # MPC预测长度 (N_steps)
 N_SAMPLES_CEM = 100000  # 每个CEM采样过程采样数量
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 N_ELITES_CEM = int(0.1 * N_SAMPLES_CEM)  # CEM精英群体数量
 N_ITER_CEM = 1  # 每个MPC优化步的CEM迭代轮数
 INITIAL_STD_CEM = CONTROL_MAX  # CEM采样初始标准差，给大一点利于探索
@@ -37,53 +28,33 @@ ALPHA_CEM = 0.8  # CEM方差均值更新时软参数，新的值所占比重
 MPC_STATE_DIM=13
 
 # 神经网络与训练参数 
-PI_STATE_DIM = 15  # Pi网络状态:暂定之前三次PWM和目标位置
+PI_STATE_DIM = 3  # Pi网络状态:目标位置
 Q_STATE_DIM = 27 # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
 RESNET_AUX_DIM = 9 # ResNet辅助头输出维度，6D连续表示姿态+相对下一目标的位置
 GRU_AUX_DIM = 6 # GRU辅助头输出维度，相对下一目标的速度+3D角速度
-<<<<<<< HEAD
-GRU_LAYER = 2 # GRU层数
-DROP_OUT = 0.3 # GRU的dropout概率
-ACTION_DIM = 4  # 动作向量维度，4个PWM
-NN_HIDDEN_SIZE = [128,128,128, 64]  # 隐藏层大小
-LEARNING_RATE = 1e-4  # 学习率
-BUFFER_SIZE = 100000  # buffer大小
-BATCH_SIZE = 128  # 训练batch size
-NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
-MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
-EPISODE_EXPLORE = 5  # 随机探索episode数
-=======
 GRU_LAYER = 1 # GRU层数
 DROP_OUT = 0.3 # GRU的dropout概率
 ACTION_DIM = 4  # 动作向量维度，4个PWM
 NN_HIDDEN_SIZE = [256,128, 64]  # 隐藏层大小
 LEARNING_RATE = 1e-4  # 学习率
 BUFFER_SIZE = 5000  # buffer大小
-BATCH_SIZE = 256  # 训练batch size
+BATCH_SIZE = 32  # 训练batch size
+RECENT_BUFFER_SIZE = BATCH_SIZE / 2
 NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
 MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
 EPISODE_EXPLORE = 3  # 随机探索episode数
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 SCALER_REFIT_FREQUENCY = 10  # 归一化参数更新频率
 FIT_SCALER_SUBSET_SIZE = 2000  # 用于更新归一化参数的样本数
 NUM_TRANSFORMER_FRAMES = 4
 NUM_EPISODES = 1000  # 训练最大episode数
-<<<<<<< HEAD
-WARM_UP = 10000 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
-AUX_LOSS_WEIGHT = 1.0 # 辅助头总损失权重
-=======
 WARM_UP = 100 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
 AUX_LOSS_WEIGHT = 0.1 # 辅助头总损失权重
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
-POS_LOSS_WEIGHT = 0.1 # 相对位置损失权重
-ROT_LOSS_WEIGHT = 20.0  # 相对姿态损失权重
+POS_LOSS_WEIGHT = 1.0 # 相对位置损失权重
+ROT_LOSS_WEIGHT = 1.0  # 相对姿态损失权重
 VEL_LOSS_WEIGHT = 1.0  # 相对速度损失权重
-ANG_VEL_LOSS_WEIGHT = 20.0 # 相对角速度损失权重
-<<<<<<< HEAD
-=======
-DAGGER_LOSS_WEIGHT = 10 # DAGGER损失权重
+ANG_VEL_LOSS_WEIGHT = 1.0 # 相对角速度损失权重
+DAGGER_LOSS_WEIGHT = 1 # DAGGER损失权重
 EVAL_FREQ = 1 #训练过程中每多少个epoch之后进行测试
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
 
 # 穿门任务专用参数
@@ -91,35 +62,6 @@ WAYPOINT_PASS_THRESHOLD_Y = 0.5  # 判定无人机穿门的阈值
 
 # PyTorch设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# # 代价权重矩阵
-# # 控制代价矩阵
-# R_CONTROL_COST_NP = R_CONTROL_COST_NP = np.diag([
-#     1000,  # FR电机控制量
-#     1000,  # RL控制量
-#     1000,  # FL控制量
-#     1000   # RR控制量
-# ])
-# R_CONTROL_COST_MATRIX_GPU = torch.tensor(R_CONTROL_COST_NP, dtype=torch.float32, device=device)
-
-# # 运行状态代价矩阵
-# # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-8: 姿态 (p,r,y), 9-11: 角速度 (wx,wy,wz)
-# Q_STATE_COST_NP = np.diag([
-#     250.0, 1.0, 10.0,  # x,y,z位置
-#     100.0, 10.0, 100.0,   # x,y,z速度
-#     10.0, 100.0, 100.0, 100.0,     # 姿态
-#     100.0, 10.0, 100.0      # 角速度
-# ])
-# Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, device=device)
-
-# # 终端状态代价矩阵
-# Q_TERMINAL_COST_NP = np.diag([
-#     250.0, 1.0, 10.0,  # x,y,z位置
-#     100.0, 10.0, 100.0,   # x,y,z速度
-#     10.0, 100.0, 100.0, 100.0,     # 姿态
-#     100.0, 10.0, 100.0      # 角速度
-# ])
-# Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float32, device=device)
 
 # 减0后的代价权重矩阵
 # 控制代价矩阵
@@ -134,7 +76,7 @@ R_CONTROL_COST_MATRIX_GPU = torch.tensor(R_CONTROL_COST_NP, dtype=torch.float32,
 # 运行状态代价矩阵
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP = np.diag([
-    250.0, 1.0, 50.0,  # x,y,z位置
+    250.0, 0.5, 100.0,  # x,y,z位置
     100.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -143,7 +85,7 @@ Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, dev
 
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP = np.diag([
-    250.0, 1.0, 50.0,  # x,y,z位置
+    250.0, 0.5, 100.0,  # x,y,z位置
     100.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -153,7 +95,7 @@ Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float3
 # 第二扇门特供
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP_TWO = np.diag([
-    500.0, 1.0, 200.0,  # x,y,z位置
+    500.0, 0.5, 200.0,  # x,y,z位置
     150.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -162,7 +104,7 @@ Q_STATE_COST_MATRIX_GPU_TWO = torch.tensor(Q_STATE_COST_NP_TWO, dtype=torch.floa
 
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP_TWO = np.diag([
-    500.0, 1.0, 200.0,  # x,y,z位置
+    500.0, 0.5, 200.0,  # x,y,z位置
     150.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度

@@ -103,8 +103,6 @@ class env:
             return 1
         else: # else确保越过了第二个门
             return 2
-<<<<<<< HEAD
-=======
     
     # 将四元数转成旋转矩阵
     def quaternions_to_rotation_matrices(self, quaternions):
@@ -138,7 +136,6 @@ class env:
         rot_mats[..., 2, 2] = 1 - 2 * (xx + yy)
         
         return rot_mats
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
     def get_drone_state(self): # 给MPC的13维向量和给Q网络的25维状态向量
         # 获取无人机状态
@@ -156,11 +153,8 @@ class env:
         # 获取姿态角 (俯仰pitch, 滚转roll, 偏航yaw, 欧拉角表示, 弧度制)
         orientation_q = fpv_state_raw.kinematics_estimated.orientation
         fpv_attitude = np.array([orientation_q.w_val, orientation_q.x_val, orientation_q.y_val, orientation_q.z_val]) # 四元数表示
-<<<<<<< HEAD
-=======
         attitude_9d = self.quaternions_to_rotation_matrices(fpv_attitude)
         attitude_6d = np.concatenate((attitude_9d[0], attitude_9d[1]))
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # pitch, roll, yaw = airsim.to_eularian_angles(orientation_q) # # 将四元数转换为欧拉角 (radians)
         # fpv_attitude = np.array([pitch, roll, yaw])
 
@@ -187,16 +181,6 @@ class env:
         relative_vel_door_two=np.array([self.door_x_velocities[1] - linear_velocity.x_val,
                                         - linear_velocity.y_val,
                                         - linear_velocity.z_val])
-<<<<<<< HEAD
-
-        return np.concatenate((fpv_pos, fpv_vel, fpv_attitude, fpv_angular_vel)), \
-            np.concatenate((fpv_vel, fpv_attitude, fpv_angular_vel, 
-                            relative_pos_door_one, relative_vel_door_one,  
-                            relative_pos_door_two, relative_vel_door_two, relative_pos_target))
-    
-    def get_img_sequence(self):
-        img_vector = []
-=======
         
         # 获取无人机相对阶段目标的位置、速度
         if self.phase_idx == 0:
@@ -217,7 +201,6 @@ class env:
     def get_img_sequence(self):
         img_vector = []
         relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = [], [], [], []
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         for i in range(self.frames): # 在这里需要计算拍照时间，可能考虑异步编程
             # 计算当前时间
             # deviation=0.0 # 不同门框错开
@@ -225,14 +208,11 @@ class env:
             self._update_door_positions(self.elapsed_time) # 更新门位置
             self.elapsed_time = self.elapsed_time + self.img_time
             self.client.simPause(True)
-<<<<<<< HEAD
-=======
             _, _, pos, atti, vel, angular = self.get_drone_state()
             relative_next_target_pos.append(pos)
             attitude_9d.append(atti)
             relative_next_target_vel.append(vel)
             fpv_angular_vel.append(angular)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             # 拍照
             responses = self.client.simGetImages([
                 airsim.ImageRequest("0", airsim.ImageType.Scene, pixels_as_float=False, compress=False)
@@ -251,14 +231,11 @@ class env:
             self.client.simPause(False)
             # 等待下一帧
             time.sleep(self.img_time)
-<<<<<<< HEAD
-=======
         
         relative_next_target_pos = np.stack(relative_next_target_pos)
         attitude_9d = np.stack(attitude_9d)
         relative_next_target_vel = np.stack(relative_next_target_vel)
         fpv_angular_vel = np.stack(fpv_angular_vel)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         # 将序列堆叠为 Tensor (num_frames, channels, height, width)
         img_vector = torch.stack(img_vector, dim=0)  # 输出维度: (4, 3, 256, 144)
@@ -266,11 +243,7 @@ class env:
         # 添加 Batch 维度 (batch_size, num_frames, channels, height, width)
         img_vector = img_vector.unsqueeze(0)  # 输出维度: (1, 4, 3, 256, 144)
 
-<<<<<<< HEAD
-        return img_vector
-=======
         return img_vector, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
     def reset(self):
         # AirSim状态重置与初始化
@@ -372,13 +345,8 @@ class env:
 
         self.phase_idx = 0
         self.elapsed_time = time.time() - self.start_time
-<<<<<<< HEAD
-        img_tensor = self.get_img_sequence() # 获取图像编码张量
-        current_drone_state, Q_state = self.get_drone_state()
-=======
         img_tensor, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = self.get_img_sequence() # 获取图像编码张量
         current_drone_state, Q_state, _, _, _, _ = self.get_drone_state()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         self.start_time_step = time.time()
 
         collision_info = self.client.simGetCollisionInfo()
@@ -386,15 +354,6 @@ class env:
 
         self.info = 0
         self.done = False
-<<<<<<< HEAD
-        self.past_actions = np.array([0.5, 0.5, 0.5, 0.5,
-                                0.5, 0.5, 0.5, 0.5,
-                                0.5, 0.5, 0.5, 0.5])
-        self.final_pi_target = self.final_target_state[0:3] # 只看位置
-
-        return current_drone_state, self.final_target_state, self.waypoints_y,\
-                self.door_z_positions, self.door_param, img_tensor, self.past_actions, Q_state, self.final_pi_target, self.elapsed_time
-=======
         self.past_actions = np.array([0.6, 0.6, 0.6, 0.6,
                                 0.6, 0.6, 0.6, 0.6,
                                 0.6, 0.6, 0.6, 0.6])
@@ -403,34 +362,17 @@ class env:
         return current_drone_state, self.final_target_state, self.waypoints_y,\
                 self.door_z_positions, self.door_param, img_tensor, self.past_actions, Q_state, self.final_pi_target, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
     def step(self, control_signal):
         # 发送油门指令
         # end_time=time.time()
         # print("calculation time consumed:", end_time-self.start_time_step)
         self.client.simPause(False)
-<<<<<<< HEAD
-=======
-        # print(f"control signal received by env:{control_signal}")
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         self.client.moveByMotorPWMsAsync(float(control_signal[0]),float(control_signal[1]),float(control_signal[2]),float(control_signal[3]), self.DT*2)
         time.sleep(self.DT-4*self.img_time) # 仿真持续步长
         
         self.elapsed_time = self.elapsed_time + self.DT - 4 * self.img_time
         # 理论上这里要过4个self.img_time
-<<<<<<< HEAD
-        img_tensor = self.get_img_sequence()
-        self._update_door_positions(self.elapsed_time) # 更新门位置
-
-        # 往期动作也需要缩放
-        self.past_actions = np.concatenate((self.past_actions[4:],\
-                                             2 * (control_signal - self.min_action) / (self.max_action - self.min_action) - 1))
-        self.client.simPause(True)
-        # self.start_time_step=time.time()
-
-        current_drone_state, Q_state = self.get_drone_state()
-=======
         img_tensor, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = self.get_img_sequence()
         self._update_door_positions(self.elapsed_time) # 更新门位置
 
@@ -440,7 +382,6 @@ class env:
         # self.start_time_step=time.time()
 
         current_drone_state, Q_state, _, _, _, _ = self.get_drone_state()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         self.phase_idx = self._get_current_waypoint_index(current_drone_state[1], self.waypoints_y, self.pass_threshold)
         # print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
         # print("————————————————————————————————————")
@@ -452,22 +393,13 @@ class env:
             collided = True
 
         # 计算进度奖励 (R_progress)
-<<<<<<< HEAD
-        R_approach = - np.linalg.norm(Q_state[22:25]) # 距离最终目标的距离
-=======
         R_approach = - np.linalg.norm(Q_state[24:27]) # 距离最终目标的距离
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         R_centering = 0
         R_velocity_align = 0
         if self.phase_idx != 2:
-<<<<<<< HEAD
-            R_centering = - np.linalg.norm(Q_state[10 + self.phase_idx * 6 : 13 + self.phase_idx * 6]) # 相对下一个门的距离
-            R_velocity_align = - np.linalg.norm(Q_state[13 + self.phase_idx * 6]) # 相对下一个门x方向的速度
-=======
             R_centering = - np.linalg.norm(Q_state[12 + self.phase_idx * 6 : 15 + self.phase_idx * 6]) # 相对下一个门的距离
             R_velocity_align = - np.linalg.norm(Q_state[15 + self.phase_idx * 6]) # 相对下一个门x方向的速度
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         R_progress = 0.2 * R_approach + 1.0 * R_centering + 5.0 * R_velocity_align # 进度奖励加权
 
@@ -484,11 +416,7 @@ class env:
             self.done=True
             self.info=0
             self.i+=1
-<<<<<<< HEAD
-        elif np.linalg.norm(Q_state[22:25]) < self.target_distance:
-=======
         elif np.linalg.norm(Q_state[24:27]) < self.target_distance:
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             R_event += 300
             self.done = True
             self.info = 1
@@ -497,9 +425,5 @@ class env:
         # 5. 计算总奖励
         reward = R_progress + R_event + R_cost
         
-<<<<<<< HEAD
-        return current_drone_state, img_tensor, self.past_actions, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time
-=======
         return current_drone_state, img_tensor, self.past_actions, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb

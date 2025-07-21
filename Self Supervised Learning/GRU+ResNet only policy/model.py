@@ -1,9 +1,4 @@
 import torch
-<<<<<<< HEAD
-# from timesformer_pytorch import TimeSformer
-=======
-from timesformer_pytorch import TimeSformer
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
@@ -75,20 +70,12 @@ class ResNet(nn.Module):
             # 增强平移不变性：即使输入中的特征发生了轻微的平移，由于取最大值的操作，输出特征也可能保持不变，这有助于模型对特征的位置不那么敏感
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-<<<<<<< HEAD
-        self.block1 = ResidualBlock(64, 64, stride=1)
-=======
         # self.block1 = ResidualBlock(64, 64, stride=1)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # 不断通过stride=2下采样，缩小特征图的尺寸同时增加特征图的通道数
         # 深度卷积神经网络中非常常见的模式，用于在网络深层提取更高级、更抽象的特征，同时减少空间维度以节省计算量和参数
         self.block2 = ResidualBlock(64, 128, stride=2)
         self.block3 = ResidualBlock(128, 256, stride=2)
-<<<<<<< HEAD
-        self.block4 = ResidualBlock(256, 512, stride=2)
-=======
         # self.block4 = ResidualBlock(256, 512, stride=2)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
         # 二维自适应平均池化层，指定的是目标输出尺寸，而不是核大小和步长。
         # 网络会根据输入特征图的尺寸，自动计算出合适的 kernel_size 和 stride 来达到您指定的目标输出尺寸
@@ -102,29 +89,17 @@ class ResNet(nn.Module):
         # 这里是(batch_size, 512,1,1)被转成(batch_size,512)
         self.aux_head = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(),
-<<<<<<< HEAD
-            nn.Linear(512, 256), nn.ReLU(),
-            nn.Linear(256, num_aux_outputs)
-=======
             nn.Linear(256, 128), nn.ReLU(),
             nn.Linear(128, num_aux_outputs)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         )
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
         x = self.maxpool(x)
-<<<<<<< HEAD
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
-=======
         # x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
         # x = self.block4(x)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         aux_output = self.aux_head(x) # 第四个残差块出来就直接去辅助头了
         main_features = self.avgpool(x) # 第四个残差块出来经过平均池化形成主特征向量
         main_features = torch.flatten(main_features, 1)
@@ -137,11 +112,7 @@ class GRU(nn.Module):
     - GRU处理时序信息，并有辅助头预测速度/角速度。
     - 最终输出一个融合时空信息的特征向量。
     """
-<<<<<<< HEAD
-    def __init__(self, resnet_aux_outputs, gru_hidden_dim, gru_aux_outputs, gru_layers=2, dropout=0.3):
-=======
     def __init__(self, resnet_aux_outputs, gru_hidden_dim, gru_aux_outputs, gru_layers=1, dropout=0.3):
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         """
         Args:
             resnet_aux_outputs (int): ResNet辅助头输出维度 (例如: 6个位姿参数)
@@ -152,11 +123,7 @@ class GRU(nn.Module):
         
         # ResNet逐帧提取特征
         self.image_feature_extractor = ResNet(num_aux_outputs=resnet_aux_outputs)
-<<<<<<< HEAD
-        resnet_main_feature_dim = 512 # ResNet的主输出维度
-=======
         resnet_main_feature_dim = 256 # ResNet的主输出维度
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         
         # GRU的输入维度 = 图像主特征 + 外部动态特征，暂时先只有图像
         gru_input_dim = resnet_main_feature_dim # + external_dynamic_features
@@ -187,7 +154,7 @@ class GRU(nn.Module):
         # 它作用于GRU的整个输出序列，以得到每个时间步的预测
         self.gru_aux_head = nn.Linear(gru_hidden_dim, gru_aux_outputs)
 
-    def forward(self, image_sequence):
+    def forward(self, image_sequence, hidden_state=None):
         """
         Args:
             image_sequence (Tensor): 形状为 (Batch批量大小, Time帧数, Channels通道数, Height高度, Width宽度) 的图像序列
@@ -233,7 +200,7 @@ class GRU(nn.Module):
         # gru_output_sequence 是 GRU 在每个时间步的输出（通常是隐藏状态）。形状是 (B, T, gru_hidden_dim)，包含了序列中每个时间步的隐藏状态输出。
         # last_hidden_state 是 GRU 最后一个时间步的隐藏状态，形状是 (num_layers * num_directions, B, gru_hidden_dim)。
         # 如果是单向 GRU，则形状为 (num_layers, B, gru_hidden_dim)。
-        gru_output_sequence, last_hidden_state = self.gru(gru_inputs_sequence)
+        gru_output_sequence, last_hidden_state = self.gru(gru_inputs_sequence, hidden_state)
         
         # GRU的输出分两路
         # GRU的辅助头，对每一帧进行显式的速度/角速度预测，（B,T,6）
@@ -242,14 +209,42 @@ class GRU(nn.Module):
         # 最终的融合时空特征向量 (取最后一层的最后一个时间步的隐藏状态)
         final_feature_vector = last_hidden_state[-1, :, :]
         
-        return final_feature_vector, resnet_aux_predictions, gru_aux_predictions
+        return final_feature_vector, resnet_aux_predictions, gru_aux_predictions, last_hidden_state
 
-# Initialize Policy weights
-def weights_init_(m,seed):
-    torch.manual_seed(seed) #使用传入的种子
-    if isinstance(m, nn.Linear): #判断模块是不是线性层，是的话就进行初始化
-        torch.nn.init.xavier_uniform_(m.weight, gain=1)
-        torch.nn.init.constant_(m.bias, 0)
+def init_weights(m):
+    """
+    根据模块类型应用Kaiming, Orthogonal等最佳实践的权重初始化。
+    使用方法: model.apply(init_weights)
+    """
+    if isinstance(m, nn.Conv2d):
+        # Kaiming 正态分布初始化，专为ReLU设计
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            # 偏置通常初始化为0
+            nn.init.constant_(m.bias, 0)
+            
+    elif isinstance(m, nn.BatchNorm2d):
+        # BN层的gamma初始化为1, beta初始化为0
+        nn.init.constant_(m.weight, 1)
+        nn.init.constant_(m.bias, 0)
+        
+    elif isinstance(m, nn.GRU):
+        for name, param in m.named_parameters():
+            if 'weight_ih' in name:
+                # 输入到隐藏层的权重，使用Xavier均匀分布
+                nn.init.xavier_uniform_(param.data)
+            elif 'weight_hh' in name:
+                # 隐藏层到隐藏层的权重，使用正交初始化
+                nn.init.orthogonal_(param.data)
+            elif 'bias' in name:
+                # 偏置初始化为0
+                param.data.fill_(0)
+                
+    elif isinstance(m, nn.Linear):
+        # Kaiming 正态分布初始化
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
@@ -273,54 +268,38 @@ class GaussianPolicy(nn.Module):
                  gru_layers, dropout, RE_PARAMETERIZATION=True):
         super(GaussianPolicy, self).__init__()
         self.GRU = GRU(resnet_aux_outputs, embedding_dim, gru_aux_outputs, gru_layers=gru_layers, dropout=dropout)
-<<<<<<< HEAD
-        self.mlp_network=mlp([embedding_dim + num_inputs] + list(hidden_sizes), activation, activation) #特征向量+目标位置+往期动作
-=======
 
         # 在拼接后、MLP前加入归一化层LayerNorm
         concatenated_dim = embedding_dim + num_inputs # feature维度+state维度
         # self.concat_norm = nn.LayerNorm(concatenated_dim)
 
         self.mlp_network=mlp([concatenated_dim] + list(hidden_sizes), activation, activation) #特征向量+目标位置+往期动作
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         self.mu_layer = nn.Linear(hidden_sizes[-1], num_actions)
         # 生成mu的层
         self.log_std_layer = nn.Linear(hidden_sizes[-1], num_actions)
         self.re_parameterization=RE_PARAMETERIZATION
-
         # 动作缩放，这里在外部解决，避免动作相差太小
         self.action_scale = torch.FloatTensor([
                 (max_action - min_action ) / 2.])
         self.action_bias = torch.FloatTensor([
                 (max_action + min_action ) / 2.])
 
-    def forward(self, img_sequence, state):
+    def forward(self, img_sequence, state, hidden_state=None):
         # 输入到 GRU
-        features, resnet_preds, gru_preds = self.GRU(img_sequence)  # 提取特征张量
-<<<<<<< HEAD
-        x=self.mlp_network(torch.cat([features,state],1))
-=======
-        concatenated_input = torch.cat([features,state],1) # 拼接特征张量和状态
+        features, resnet_preds, gru_preds, new_hidden_state = self.GRU(img_sequence, hidden_state)  # 提取特征张量
+        concatenated_input = torch.cat([features, state],1) # 拼接特征张量和状态
         # 先进行层归一化
         # normalized_input = self.concat_norm(concatenated_input)
         # 检查normalized_input的量级
         x=self.mlp_network(concatenated_input)
         # print(f"normalized input:{normalized_input}")
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         mean = self.mu_layer(x)
         log_std = self.log_std_layer(x)
         log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
-        return mean, log_std, resnet_preds, gru_preds
+        return mean, log_std, resnet_preds, gru_preds, new_hidden_state
 
-    def sample(self, img_sequence, state):
-        mean, log_std, resnet_output, gru_output = self.forward(img_sequence, state)
-<<<<<<< HEAD
-        std = torch.exp(log_std)
-        normal = Normal(mean, std)
-        x_t = normal.rsample()
-        # 【以下方案是代码作者自己的方案，先得到tanh动作再对这一动作求log】
-        y_t = torch.tanh(x_t) # 没有做重参数化
-=======
+    def sample(self, img_sequence, state, hidden_state=None):
+        mean, log_std, resnet_output, gru_output, new_hidden_state = self.forward(img_sequence, state, hidden_state)
         # print(f"mean before tanh:{mean}")
         std = torch.exp(log_std)
         # print(std)
@@ -328,7 +307,6 @@ class GaussianPolicy(nn.Module):
         x_t = normal.rsample() # 重参数化
         # 【以下方案是代码作者自己的方案，先得到tanh动作再对这一动作求log】
         y_t = torch.tanh(x_t) 
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         action = y_t * self.action_scale + self.action_bias #不是重参数化，只是单纯把值调整到动作空间范围内
         log_prob = normal.log_prob(x_t)
         # Enforcing Action Bound
@@ -337,7 +315,7 @@ class GaussianPolicy(nn.Module):
         #log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + epsilon) #原论文中公式，但是多了个action_scale
         log_prob = log_prob.sum(1, keepdim=True)
         mean = torch.tanh(mean) * self.action_scale + self.action_bias
-        return action, log_prob, mean, resnet_output, gru_output # 辅助头输出分别是（B,T,9）和（B,T,6）
+        return action, log_prob, mean, resnet_output, gru_output, new_hidden_state # 辅助头输出分别是（B,T,9）和（B,T,6）
 
     def to(self, device):
         self.action_scale = self.action_scale.to(device)
