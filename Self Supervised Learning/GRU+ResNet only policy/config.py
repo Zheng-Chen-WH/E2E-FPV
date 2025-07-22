@@ -37,7 +37,7 @@ DROP_OUT = 0.3 # GRU的dropout概率
 ACTION_DIM = 4  # 动作向量维度，4个PWM
 NN_HIDDEN_SIZE = [256,128, 64]  # 隐藏层大小
 LEARNING_RATE = 1e-4  # 学习率
-BUFFER_SIZE = 5000  # buffer大小
+BUFFER_SIZE = 6000  # buffer大小
 BATCH_SIZE = 32  # 训练batch size
 RECENT_BUFFER_SIZE = BATCH_SIZE / 2
 NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
@@ -63,6 +63,35 @@ WAYPOINT_PASS_THRESHOLD_Y = 0.5  # 判定无人机穿门的阈值
 # PyTorch设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# # 代价权重矩阵
+# # 控制代价矩阵
+# R_CONTROL_COST_NP = R_CONTROL_COST_NP = np.diag([
+#     1000,  # FR电机控制量
+#     1000,  # RL控制量
+#     1000,  # FL控制量
+#     1000   # RR控制量
+# ])
+# R_CONTROL_COST_MATRIX_GPU = torch.tensor(R_CONTROL_COST_NP, dtype=torch.float32, device=device)
+
+# # 运行状态代价矩阵
+# # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-8: 姿态 (p,r,y), 9-11: 角速度 (wx,wy,wz)
+# Q_STATE_COST_NP = np.diag([
+#     250.0, 1.0, 10.0,  # x,y,z位置
+#     100.0, 10.0, 100.0,   # x,y,z速度
+#     10.0, 100.0, 100.0, 100.0,     # 姿态
+#     100.0, 10.0, 100.0      # 角速度
+# ])
+# Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, device=device)
+
+# # 终端状态代价矩阵
+# Q_TERMINAL_COST_NP = np.diag([
+#     250.0, 1.0, 10.0,  # x,y,z位置
+#     100.0, 10.0, 100.0,   # x,y,z速度
+#     10.0, 100.0, 100.0, 100.0,     # 姿态
+#     100.0, 10.0, 100.0      # 角速度
+# ])
+# Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float32, device=device)
+
 # 减0后的代价权重矩阵
 # 控制代价矩阵
 R_CONTROL_COST_NP = np.diag([
@@ -76,7 +105,7 @@ R_CONTROL_COST_MATRIX_GPU = torch.tensor(R_CONTROL_COST_NP, dtype=torch.float32,
 # 运行状态代价矩阵
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP = np.diag([
-    250.0, 0.5, 100.0,  # x,y,z位置
+    250.0, 0.5, 200.0,  # x,y,z位置
     100.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -85,7 +114,7 @@ Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, dev
 
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP = np.diag([
-    250.0, 0.5, 100.0,  # x,y,z位置
+    250.0, 0.5, 200.0,  # x,y,z位置
     100.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -95,7 +124,7 @@ Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float3
 # 第二扇门特供
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP_TWO = np.diag([
-    500.0, 0.5, 200.0,  # x,y,z位置
+    500.0, 0.5, 300.0,  # x,y,z位置
     150.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
@@ -104,7 +133,7 @@ Q_STATE_COST_MATRIX_GPU_TWO = torch.tensor(Q_STATE_COST_NP_TWO, dtype=torch.floa
 
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP_TWO = np.diag([
-    500.0, 0.5, 200.0,  # x,y,z位置
+    500.0, 0.5, 300.0,  # x,y,z位置
     150.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度

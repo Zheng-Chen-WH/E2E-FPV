@@ -201,11 +201,7 @@ class CEM_MPC():
         self.examiner_instance = SimpleFlightDynamicsTorch(       # 检验并行化之后模型可靠性
             1, dt=0.05, dtype=torch.float32
         )
-<<<<<<< HEAD
-        self.mean_control_sequence_warm_start = np.zeros((self.prediction_horizon, self.action_dim))
-=======
         self.mean_control_sequence_warm_start = np.ones((self.prediction_horizon, self.action_dim))*0.64
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
     def step(self, current_true_state, current_idx, elapsed_time):
         # 分阶段
@@ -284,10 +280,7 @@ class CEM_MPC():
 
         optimal_control_sequence = cem_iter_mean_gpu.cpu().numpy()
         actual_control_to_apply = optimal_control_sequence[0, :].copy()
-<<<<<<< HEAD
-=======
         actual_control_to_apply = np.clip(actual_control_to_apply, self.control_min, self.control_max)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         
         # warm start
         self.mean_control_sequence_warm_start = np.roll(optimal_control_sequence, -1, axis=0)

@@ -49,8 +49,6 @@ def img_load(file_names):
     input_sequence = input_sequence.unsqueeze(0)  # 输出维度: (1, 4, 3, 256, 144)
     return img_sequence #返回处理好的张量
 
-<<<<<<< HEAD
-=======
 def map_value(x, a, b, c, d):
     """
     将值 x 从范围 [a, b] 映射到范围 [c, d]。
@@ -107,5 +105,4 @@ def weighted_mse_loss(y_pred, y_true):
   return final_loss
 
 
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
     

@@ -1,7 +1,5 @@
 import torch
 import math
-<<<<<<< HEAD
-=======
 '''
 模仿simpleflight的PID级联控制器实现
 级联过程：位置→速度→姿态→角速率，油门之上就是角速率
@@ -9,7 +7,6 @@ import math
 角速率环输出的是角加速度/扭矩，速度环输出所需z方向加速度，两者一同送入混控器（mixer），将总推力、力矩分配给四个电机生成pwm
 所以理论上Z升力+角速率就是pwm以上的最底层控制了
 '''
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
  
 class SimpleFlightParams:
     def __init__(self, device='cpu'):
@@ -30,15 +27,9 @@ class SimpleFlightParams:
         self.angle_rate_pid_max_limit = torch.tensor([_arp_kMaxLimit, _arp_kMaxLimit, _arp_kMaxLimit], dtype=torch.float32, device=self.device) # roll, pitch, yaw
         
         # 存储PID增益值，前三个值分别对应滚转、俯仰、偏航轴，第四个为1.0或0.0（默认值），可以在这里修改以实现三轴使用不同pid增益
-<<<<<<< HEAD
-        self.angle_rate_pid_p = torch.tensor([_arp_kP, _arp_kP, _arp_kP, 1.0], dtype=torch.float32, device=self.device)
-        self.angle_rate_pid_i = torch.tensor([_arp_kI, _arp_kI, _arp_kI, 0.0], dtype=torch.float32, device=self.device)
-        self.angle_rate_pid_d = torch.tensor([_arp_kD, _arp_kD, _arp_kD, 0.0], dtype=torch.float32, device=self.device)
-=======
         self.angle_rate_pid_p = torch.tensor([_arp_kP, _arp_kP, _arp_kP], dtype=torch.float32, device=self.device)
         self.angle_rate_pid_i = torch.tensor([_arp_kI, _arp_kI, _arp_kI], dtype=torch.float32, device=self.device)
         self.angle_rate_pid_d = torch.tensor([_arp_kD, _arp_kD, _arp_kD], dtype=torch.float32, device=self.device)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # Assuming AngleRateController output limits are important for PID output directly
         self.angle_rate_pid_output_min = torch.tensor([-1.0, -1.0, -1.0], dtype=torch.float32, device=self.device) # Placeholder, adjust as needed
         self.angle_rate_pid_output_max = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=self.device)  # Placeholder, adjust as needed
@@ -129,11 +120,7 @@ class PidController:
         self.last_output = output
         return output
 
-<<<<<<< HEAD
-# 轴控制器 (来自 AngleRateController.hpp 和 PassthroughController)
-=======
 # 角速度控制器 (来自 AngleRateController.hpp 和 PassthroughController)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 class AngleRateController:
     def __init__(self, params: SimpleFlightParams, axis_idx: int): # 轴参数: 0=roll, 1=pitch, 2=yaw
         # 使用了类型注解（Type Hints）：
@@ -166,10 +153,7 @@ class AngleRateController:
     def get_output(self):
         return self.output
 
-<<<<<<< HEAD
-=======
 # 油门命令直通混控器
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 class PassthroughController:
     def __init__(self, device='cpu'):
         self.output = torch.tensor(0.0, device=device)
@@ -192,11 +176,7 @@ class SimplifiedCascadeController:
         self.device = params.device
         self.axis_controllers = [None] * 4 # Roll, Pitch, Yaw, Throttle
 
-<<<<<<< HEAD
-        # Goal modes for (roll_rate, pitch_rate, yaw_rate, throttle)
-=======
         # 目标模式为Z推力+角速度 (roll_rate, pitch_rate, yaw_rate, throttle)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # 0: AngleRate, 1: Passthrough (simplified enum)
         self.current_goal_modes = [0, 0, 0, 1] # Default: RPY=AngleRate, Thr=Passthrough
 

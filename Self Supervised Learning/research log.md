@@ -238,9 +238,6 @@
 
 ## 6.26
 + 睡前意识到DAgger和SAC不太兼容，没执行expert动作的情况下没法生成动作对
-<<<<<<< HEAD
-+ 决定把memory分成Q的buffer和DAgger的buffer
-=======
 + 决定把memory分成Q的buffer和DAgger的buffer
 
 ## 6.30
@@ -315,4 +312,3 @@
 # 7.16
 + 有点积重难返的感觉，重新从零训一个，上一轮的模型都放在/472gb卷/models底下
 + learning from an unqualified teacher
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb

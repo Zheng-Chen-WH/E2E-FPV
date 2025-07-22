@@ -7,19 +7,12 @@ import numpy as np
 import itertools
 import torch.nn as nn
 from sac import SAC
-<<<<<<< HEAD
-from replay_memory import HERMemory,ReplayMemory
-import time
-import matplotlib.pyplot as plt
-import torch
-=======
 from replay_memory import HERMemory, ReplayMemory, DAggerMemory
 import time
 import matplotlib.pyplot as plt
 import torch
 from utils import map_value
 import math
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 
 # 超参数字典
 args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True)
@@ -42,11 +35,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'hidden_sizes':cfg.NN_HIDDEN_SIZE, # 隐藏层大小，带有激活函数的隐藏层层数等于这一列表大小
     'updates_per_episode':cfg.NN_TRAIN_EPOCHS_PER_STEP, # model updates per simulator step (default: 1) 每步对参数更新的次数
     'start_episodes':cfg.MIN_EPISODES_FOR_TRAINING, # 在开始训练之前进行动作以收集数据
-<<<<<<< HEAD
-    'target_update_interval':10, # Value target update per no. of updates per step (default: 1) 目标网络更新的间隔
-=======
     'target_update_interval':5, # Value target update per no. of updates per step (default: 1) 目标网络更新的间隔
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'cuda':True, # run on CUDA (default: False)
     'LOAD PARA':False, #是否读取参数
@@ -55,11 +44,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
     'plot_title':'reward-steps.svg',
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
-<<<<<<< HEAD
-    'evaluate_freq':20, #训练过程中每多少个epoch之后进行测试
-=======
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
     'seed':20000323, #网络初始化的时候用的随机数种子  
     'max_epoch':10000,
     'logs':True, #是否留存训练参数供tensorboard分析 
@@ -73,12 +58,8 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'pos_loss_weight':cfg.POS_LOSS_WEIGHT,  # 相对位置损失权重
     'rot_loss_weight':cfg.ROT_LOSS_WEIGHT,  # 相对姿态损失权重
     'vel_loss_weight':cfg.VEL_LOSS_WEIGHT,  # 相对速度损失权重
-<<<<<<< HEAD
-    'ang_vel_loss_weight':cfg.ANG_VEL_LOSS_WEIGHT # 相对角速度损失权重
-=======
     'ang_vel_loss_weight':cfg.ANG_VEL_LOSS_WEIGHT, # 相对角速度损失权重
     'dagger_loss_weight': cfg.DAGGER_LOSS_WEIGHT #DAGGER损失权重
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
     }
 
 cem_hyperparams = {
@@ -125,10 +106,6 @@ env_params={'DT':cfg.DT,
 airsim_environment = env(env_params)
 # Agent
 agent = SAC(args)
-<<<<<<< HEAD
-test_agent = SAC(args)
-=======
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 MPC_agent = CEM_MPC(cem_hyperparams, mpc_params)
 time_start=time.time()
 #Tensorboard
@@ -138,10 +115,7 @@ time_start=time.time()
 
 # Memory
 memory = ReplayMemory(args['replay_size'])
-<<<<<<< HEAD
-=======
 dagger_memory = DAggerMemory(args['replay_size']) # DAgger过程的memory
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
 # memory = HERMemory(args['replay_size'],"Final") # HER没修好
 
 # 记录列表
@@ -163,13 +137,8 @@ if args['task']=='Train':
     avg_reward_list=[]
     k=0
     min_loss = 100
-<<<<<<< HEAD
-    # if args['LOAD PARA']==True:
-        # agent.load_model("master", evaluate=False)
-=======
     if args['LOAD PARA']==True:
         agent.load_model("BASE", evaluate=False)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
@@ -179,42 +148,11 @@ if args['task']=='Train':
         episode_steps = 0
         phase_idx = 0
         current_drone_state, final_target_state, waypoints_y, door_z_positions, door_param,\
-<<<<<<< HEAD
-                 img_tensor, past_actions, Q_state, final_pi_target, elapsed_time = airsim_environment.reset()
-=======
                  img_tensor, past_actions, Q_state, final_pi_target, elapsed_time, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
         MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
         while episode_steps <= args['max_steps']:
             # NN_action, resnet_output, gru_output = agent.select_action(img_tensor, np.concatenate((past_actions, final_pi_target)))  # 开始输出actor网络动作
             MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
-<<<<<<< HEAD
-
-            if i_episode > args['start_episodes']:
-                    # Number of updates per step in environment 每次交互之后可以进行多次训练...
-                    for i in range(args['updates_per_episode']):
-                        # Update parameters of all the networks
-                        critic_1_loss, critic_2_loss, policy_loss, ent_loss, alpha = agent.update_parameters(memory, args['batch_size'], updates)
-                        if policy_loss < min_loss:
-                            min_loss = policy_loss
-                            model_name = f'loss_{updates}_{policy_loss}'
-                            print(f'————————————————\nSaving currently lowest loss model, loss:{policy_loss}\n————————————————————')
-                            agent.save_model(model_name)
-                            # memory.save_buffer('buffer')
-                        # 清理显存
-                        torch.cuda.empty_cache()
-                        if args['logs']==True:
-                            writer.add_scalar('loss/critic_1', critic_1_loss, updates)
-                            writer.add_scalar('loss/critic_2', critic_2_loss, updates)
-                            writer.add_scalar('loss/policy', policy_loss, updates)
-                            # print(policy_loss)
-                            writer.add_scalar('loss/entropy_loss', ent_loss, updates)
-                            writer.add_scalar('entropy_temprature/alpha', alpha, updates)
-                        updates += 1
-
-            next_drone_state, next_img_tensor, next_past_actions, next_Q_state,\
-                  reward, done, phase_idx, info, elapsed_time = airsim_environment.step(MPC_action)  # Step
-=======
             # if len(memory) > args['batch_size'] and len(dagger_memory) > args['batch_size']:
             #         # Number of updates per step in environment 每次交互之后可以进行多次训练
             #         for i in range(args['updates_per_episode']):
@@ -239,7 +177,6 @@ if args['task']=='Train':
             next_drone_state, next_img_tensor, next_past_actions, next_Q_state,\
                   reward, done, phase_idx, info, elapsed_time, \
                     relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(MPC_action)  # Step
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             # print("real state:", next_drone_state)
             episode_steps += 1
             episode_reward += reward #没用gamma是因为在sac里求q的时候用了
@@ -247,17 +184,11 @@ if args['task']=='Train':
             # Ignore the "done" signal if it comes from hitting the time horizon.
             # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
             
-<<<<<<< HEAD
-            scaled_MPC_action = 10 * (MPC_action - mpc_params['control_min']) / (mpc_params['control_max'] - mpc_params['control_min']) - 5
-            memory.push(img_tensor, past_actions, Q_state, scaled_MPC_action, \
-                        reward, next_img_tensor, next_past_actions, next_Q_state, done, final_pi_target, info)
-=======
             scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
             if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0 and not done:
                 memory.push(img_tensor, past_actions, Q_state, scaled_MPC_action, \
                             reward, next_img_tensor, next_past_actions, next_Q_state, done, final_pi_target,
                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             
             current_drone_state = next_drone_state
             img_tensor = next_img_tensor
@@ -265,11 +196,7 @@ if args['task']=='Train':
             Q_state = next_Q_state
 
             if done:
-<<<<<<< HEAD
-                print(f"收集到数据量：{len(memory)}")
-=======
                 # print(f"收集到数据量：{len(memory)}")
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
                 steps_list.append(i_episode)
                 episode_reward_list.append(episode_reward)
                 if len(episode_reward_list)>=500:
@@ -281,68 +208,6 @@ if args['task']=='Train':
                 break
         if args['logs']==True:
             writer.add_scalar('reward/train', episode_reward, i_episode)
-<<<<<<< HEAD
-        if i_episode > args['start_episodes']:
-            print(f"Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}") #, loss{policy_loss}")
-        # round(episode_reward,2) 对episode_reward进行四舍五入，并保留两位小数
-
-        '''保留测试环节'''
-        # if i_episode % args['evaluate_freq'] == 0 and args['eval'] is True: #评价上一个训练过程
-        #     test_agent.load_model(model_name)
-        #     avg_reward = 0.
-        #     episodes = 5
-        #     done_num=0
-        #     for _ in range(episodes):
-        #         episode_reward = 0
-        #         done=False
-        #         episode_steps = 0
-        #         success=False
-        #         phase_idx = 0
-        #         current_drone_state, final_target_state, waypoints_y,\
-        #                 door_z_positions, door_param, img_tensor, past_actions, Q_state, final_pi_target, elapsed_time = airsim_environment.reset()
-        #         while True:
-        #             NN_action = test_agent.select_action(img_tensor, np.concatenate((past_actions, final_pi_target)), evaluate=True)  # 开始输出actor网络动
-        #             scaled_NN_action = (NN_action + 5) / 10 * (mpc_params['control_max'] - mpc_params['control_min']) + mpc_params['control_min']
-        #             next_drone_state, next_img_tensor, next_past_actions, next_Q_state,\
-        #                 reward, done, phase_idx, info, elapsed_time = airsim_environment.step(scaled_NN_action)  # Step
-        #             episode_reward += reward 
-                    
-        #             current_drone_state = next_drone_state
-        #             img_tensor = next_img_tensor
-        #             past_actions = next_past_actions
-        #             Q_state = next_Q_state
-        #             if info:
-        #                 done_num+=1
-        #             if done or episode_steps>200:
-        #                 break
-        #         avg_reward += episode_reward
-        #     avg_reward /= episodes
-        #     if args['logs']==True:
-        #         writer.add_scalar('avg_reward/test', avg_reward, i_episode)
-        #     print("----------------------------------------")
-        #     print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
-        #     print("----------------------------------------")
-        #     # if i_episode<=100000:
-        #     #     if avg_reward>best_avg_reward and avg_fuel_left>best_avg_fuel:
-        #     #         best_avg_reward=avg_reward
-        #     #         best_avg_fuel=avg_fuel_left
-        #     #         model_name='sofarsogood_{}_success_{}_fuel_{}.pt'.format(k,done_num,round(best_avg_fuel,4))
-        #     #         agent.save_checkpoint(model_name)
-        #     #         memory.save_buffer("AON")
-        #     #         k=k+1
-        #     # if avg_reward > best_avg_reward: #在能成功的基础上，只考虑燃料最优；
-        #     if done_num == episodes and avg_reward > best_avg_reward: #继续训练而已
-        #         model_name = f'master_{k}'
-        #         agent.save_model(model_name)
-        #         best_avg_reward = avg_reward
-        #         memory.save_buffer(model_name)
-        #         k=k+1
-        #         # env.plot(args, steps_list, episode_reward_list, avg_reward_list)
-        #         # break
-
-        # if i_episode==args['max_epoch']:
-        if len(memory) == args['replay_size']: # 生成数据集
-=======
             print(f"----------------------Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------") #, loss{policy_loss}")
         # round(episode_reward,2) 对episode_reward进行四舍五入，并保留两位小数
 
@@ -445,7 +310,6 @@ if args['task']=='Train':
 
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             memory.save_buffer("master")
             print("训练结束，{}次仍未完成训练".format(args['max_epoch']))
             # env.plot(args, steps_list, episode_reward_list, avg_reward_list)
@@ -469,17 +333,10 @@ if args['task']=='Test':
                 door_z_positions, door_param, img_tensor, past_actions, Q_state, final_pi_target, elapsed_time = airsim_environment.reset()
         while True:
             NN_action = agent.select_action(img_tensor, np.concatenate((past_actions, final_pi_target)), evaluate=True)  # 开始输出actor网络动
-<<<<<<< HEAD
-            scaled_NN_action = (NN_action + 5) / 10 * (mpc_params['control_max'] - mpc_params['control_min']) + mpc_params['control_min']
-
-            next_drone_state, next_img_tensor, next_past_actions, next_Q_state,\
-                reward, done, phase_idx, info, elapsed_time = airsim_environment.step(scaled_NN_action)  # Step
-=======
             rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
 
             next_drone_state, next_img_tensor, next_past_actions, next_Q_state,\
                 reward, done, phase_idx, info, elapsed_time = airsim_environment.step(rescaled_NN_action)  # Step
->>>>>>> 4c0bec554d7a6927cbc4cbfcdafbf12be903ffdb
             episode_reward += reward
             
             current_drone_state = next_drone_state
