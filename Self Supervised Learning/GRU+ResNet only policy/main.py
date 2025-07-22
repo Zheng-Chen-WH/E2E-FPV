@@ -1,5 +1,3 @@
-import matplotlib.pyplot as plt
-import torch.optim as optim
 import config as cfg
 from env import env
 from CEM_MPC import CEM_MPC
@@ -9,8 +7,6 @@ import torch.nn as nn
 from sac import SAC
 from replay_memory import ReplayMemory
 import time
-import matplotlib.pyplot as plt
-import torch
 from utils import map_value
 import math
 
