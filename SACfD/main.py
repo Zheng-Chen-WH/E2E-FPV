@@ -142,7 +142,7 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 68
+    k = 0
     min_loss = 100
     if args['LOAD PARA']==True:
         agent.load_model("master_67_-864.58_20.9404_16.4", evaluate=False)
