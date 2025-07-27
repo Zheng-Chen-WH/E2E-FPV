@@ -404,7 +404,8 @@ class env:
         R_action_cost = - 1.0 * np.linalg.norm(control_signal) # 控制代价
         R_stability_cost = - 5.0 * np.linalg.norm(current_drone_state[10:]) # 无人机角速度尽可能小
         R_time_cost = - 1.0 # 耗时代价
-        R_cost = R_action_cost + R_stability_cost + R_time_cost
+        R_height_punishment = - 5 * (Q_state[13])**2 # 高度代价
+        R_cost = R_action_cost + R_stability_cost + R_time_cost + R_height_punishment
 
         # 计算事件奖励 (R_event)
         R_event = self.phase_idx * 100
