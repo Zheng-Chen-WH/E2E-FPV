@@ -35,7 +35,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': False, #是否读取参数
+    'LOAD PARA': True, #是否读取参数
     'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
@@ -133,10 +133,10 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 1
+    k = 240
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_67_-864.58_20.9404_16.4", evaluate=False)
+        agent.load_model("master_239_-728.9_9.3134_31.2", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
@@ -209,111 +209,111 @@ if args['task']=='Train':
         print(f"----------------------Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------") #, loss{policy_loss}")
         # round(episode_reward,2) 对episode_reward进行四舍五入，并保留两位小数
 
-        # '''DAgger环节，智能体关闭eval模式进行探索'''
-        # if i_episode % args['evaluate_freq'] == 0:
-        #     episodes = args['evaluate_freq'] * 5 # 交替mpc和dagger
-        #     for _ in range(episodes):
-        #         episode_reward = 0
-        #         done=False
-        #         episode_steps = 0
-        #         success=False
-        #         phase_idx = 0
-        #         current_drone_state, final_target_state, waypoints_y,\
-        #                 door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
-        #                      relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
-        #         MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
-        #         agent.reset()
-        #         while True:
-        #             NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
-        #             MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
-        #             scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
-        #             print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
-        #             rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
-        #             next_drone_state, next_img_tensor, next_Q_state,\
-        #                 reward, done, phase_idx, info, elapsed_time,\
-        #                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
-        #             if len(memory) > args['batch_size'] and len(dagger_memory) > args['batch_size']:
-        #                 # Number of updates per step in environment 每次交互之后可以进行多次训练
-        #                 for i in range(args['updates_per_episode']):
-        #                     # Update parameters of all the networks
-        #                     policy_loss, ent_loss, alpha = agent.update_parameters(memory, dagger_memory, recent_memory, args['batch_size'], updates)
-        #                     # if policy_loss < min_loss:
-        #                     #     min_loss = policy_loss
-        #                     #     model_name = f'master_{k}_{avg_reward}'
-        #                     #     agent.save_model(model_name)
-        #                     #     # memory.save_buffer('buffer')
-        #                     if args['logs']==True:
-        #                         writer.add_scalar('loss/policy', policy_loss, updates)
-        #                         # print(policy_loss)
-        #                         writer.add_scalar('loss/entropy_loss', ent_loss, updates)
-        #                         writer.add_scalar('entropy_temprature/alpha', alpha, updates)
-        #                     updates += 1
-        #             if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0:    
-        #                 dagger_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
-        #                                relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
-        #                 recent_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
-        #                                relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
-        #             episode_reward += reward
-        #             current_drone_state = next_drone_state
-        #             img_tensor = next_img_tensor
-        #             # past_actions = next_past_actions
-        #             Q_state = next_Q_state
-        #             episode_steps += 1
-        #             if info:
-        #                 success=True
-        #             if done or episode_steps>200:
-        #                 # if episode_steps >= 50:
-        #                 #     model_name = f'master_{k}_{round(episode_reward,2)}_{round(policy_loss,4)}_{episode_steps}'
-        #                 #     agent.save_model(model_name)
-        #                 #     k += 1
-        #                 break
-        #         print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
+        '''DAgger环节，智能体关闭eval模式进行探索'''
+        if i_episode % args['evaluate_freq'] == 0:
+            episodes = args['evaluate_freq'] * 5 # 交替mpc和dagger
+            for _ in range(episodes):
+                episode_reward = 0
+                done=False
+                episode_steps = 0
+                success=False
+                phase_idx = 0
+                current_drone_state, final_target_state, waypoints_y,\
+                        door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
+                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
+                agent.reset()
+                while True:
+                    NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
+                    MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
+                    scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
+                    print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
+                    rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
+                    next_drone_state, next_img_tensor, next_Q_state,\
+                        reward, done, phase_idx, info, elapsed_time,\
+                        relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
+                    if len(memory) > args['batch_size'] and len(dagger_memory) > args['batch_size']:
+                        # Number of updates per step in environment 每次交互之后可以进行多次训练
+                        for i in range(args['updates_per_episode']):
+                            # Update parameters of all the networks
+                            policy_loss, ent_loss, alpha = agent.update_parameters(memory, dagger_memory, recent_memory, args['batch_size'], updates)
+                            # if policy_loss < min_loss:
+                            #     min_loss = policy_loss
+                            #     model_name = f'master_{k}_{avg_reward}'
+                            #     agent.save_model(model_name)
+                            #     # memory.save_buffer('buffer')
+                            if args['logs']==True:
+                                writer.add_scalar('loss/policy', policy_loss, updates)
+                                # print(policy_loss)
+                                writer.add_scalar('loss/entropy_loss', ent_loss, updates)
+                                writer.add_scalar('entropy_temprature/alpha', alpha, updates)
+                            updates += 1
+                    if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0:    
+                        dagger_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
+                                       relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
+                        recent_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
+                                       relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
+                    episode_reward += reward
+                    current_drone_state = next_drone_state
+                    img_tensor = next_img_tensor
+                    # past_actions = next_past_actions
+                    Q_state = next_Q_state
+                    episode_steps += 1
+                    if info:
+                        success=True
+                    if done or episode_steps>200:
+                        # if episode_steps >= 50:
+                        #     model_name = f'master_{k}_{round(episode_reward,2)}_{round(policy_loss,4)}_{episode_steps}'
+                        #     agent.save_model(model_name)
+                        #     k += 1
+                        break
+                print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
 
-        # if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True: # 5轮mpc+dagger之后进行一轮测试
-        #     avg_reward = 0.
-        #     episodes = args['evaluate_freq'] * 5 # 交替强化和dagger
-        #     done_num=0
-        #     avg_step = 0
-        #     for _ in range(episodes):
-        #         episode_reward = 0
-        #         done=False
-        #         episode_steps = 0
-        #         success=False
-        #         phase_idx = 0
-        #         current_drone_state, final_target_state, waypoints_y,\
-        #                 door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
-        #                      relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
-        #         agent.reset()
-        #         while True:
-        #             NN_action = agent.select_action(img_tensor, final_pi_target, evaluate=True)  # 开始输出actor网络动作
-        #             rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
-        #             # print(f"action:{rescaled_NN_action}")
-        #             next_drone_state, next_img_tensor, next_Q_state,\
-        #                 reward, done, phase_idx, info, elapsed_time,\
-        #                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
-        #             episode_reward += reward 
+        if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True: # 5轮mpc+dagger之后进行一轮测试
+            avg_reward = 0.
+            episodes = args['evaluate_freq'] * 5 # 交替强化和dagger
+            done_num=0
+            avg_step = 0
+            for _ in range(episodes):
+                episode_reward = 0
+                done=False
+                episode_steps = 0
+                success=False
+                phase_idx = 0
+                current_drone_state, final_target_state, waypoints_y,\
+                        door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
+                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                agent.reset()
+                while True:
+                    NN_action = agent.select_action(img_tensor, final_pi_target, evaluate=True)  # 开始输出actor网络动作
+                    rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
+                    # print(f"action:{rescaled_NN_action}")
+                    next_drone_state, next_img_tensor, next_Q_state,\
+                        reward, done, phase_idx, info, elapsed_time,\
+                        relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
+                    episode_reward += reward 
                     
-        #             current_drone_state = next_drone_state
-        #             img_tensor = next_img_tensor
-        #             Q_state = next_Q_state
-        #             avg_step += 1
-        #             if info:
-        #                 done_num+=1
-        #             if done or episode_steps>200:
-        #                 break
-        #         avg_reward += episode_reward
-        #     avg_reward /= episodes
-        #     avg_step /= episodes
-        #     if args['logs']==True:
-        #         writer.add_scalar('avg_reward/test', avg_reward, i_episode)
-        #     if avg_reward >= best_avg_reward:
-        #         best_avg_reward = avg_reward
-        #     model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
-        #     agent.save_model(model_name)
-        #     k += 1
-        #     print("----------------------------------------")
-        #     print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
-        #     print("----------------------------------------")
+                    current_drone_state = next_drone_state
+                    img_tensor = next_img_tensor
+                    Q_state = next_Q_state
+                    avg_step += 1
+                    if info:
+                        done_num+=1
+                    if done or episode_steps>200:
+                        break
+                avg_reward += episode_reward
+            avg_reward /= episodes
+            avg_step /= episodes
+            if args['logs']==True:
+                writer.add_scalar('avg_reward/test', avg_reward, i_episode)
+            if avg_reward >= best_avg_reward:
+                best_avg_reward = avg_reward
+            model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
+            agent.save_model(model_name)
+            k += 1
+            print("----------------------------------------")
+            print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
+            print("----------------------------------------")
 
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集

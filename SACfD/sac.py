@@ -75,6 +75,7 @@ class SAC(object):
         self._window_disagreements = []
         self._is_initial_baseline_set = False # 标记是否已完成第一次基线设置
         self.k_final = args['k_final'] 
+        self.k_rl_threshold = args['k_rl_threshold']
         self.avg_il_loss = None
 
     def reset(self): # 为了发挥GRU时序能力，现在每次训练前要重置GRU的隐藏状态
@@ -261,18 +262,20 @@ class SAC(object):
                     # 特殊情况：第一次设置基线，无条件接受
                     self.baseline_td = candidate_td
                     self.baseline_dis = candidate_dis
+                    self.initial_td = candidate_td # 设置最初td_error值，避免训练末期rl权重反而过小
+                    self.initial_dis = candidate_dis
                     self._is_initial_baseline_set = True
                     self.target_baseline_td = candidate_td # 设置目标值，实现缓慢下降而非阶跃变化
                     self.target_baseline_dis = candidate_dis
                     print("--- Initial baseline set ---")
                 else:
-                    # 如果候选值大于旧基线，或者远小于旧基线，则更新
+                    # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
                     if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
-                        self.target_baseline_td = candidate_td
+                        self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
                         self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
                     
                     if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
-                        self.target_baseline_dis = candidate_dis
+                        self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
                         self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
 
                     print("--- Baseline re-evaluated ---")
@@ -293,8 +296,8 @@ class SAC(object):
                 # 在第一个基线建立之前，倾向于模仿
                 w_rl = torch.tensor(0.0, device=self.device)
             else:
-                norm_td = min(current_td_error / self.baseline_td, 100.0) # 裁剪值可以适当放大
-                norm_dis = min(disagreement / self.baseline_dis, 100.0)
+                norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
+                norm_dis = min(disagreement / self.baseline_dis, 2.0)
                 
                 hybrid_metric = max(norm_td, norm_dis)
                 w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
@@ -302,7 +305,7 @@ class SAC(object):
             w_il = 1 - w_rl
 
         # 计算最终加权总损失
-        total_policy_loss = w_rl * rl_policy_loss_component + w_il * il_policy_loss_component + self.aux_loss_weight * aux_loss
+        total_policy_loss = w_rl * rl_policy_loss_component + w_il * il_policy_loss_component * self.dagger_weight + self.aux_loss_weight * aux_loss
         
         self.policy_optim.zero_grad()
         total_policy_loss.backward()

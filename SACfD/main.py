@@ -59,7 +59,8 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'dagger_loss_weight': cfg.DAGGER_LOSS_WEIGHT, #DAGGER损失权重
     'baseline_update_window': cfg.BASELINE_UPDATE, # 计算rl与il混合权重时的update次数间隔
     'baseline_update_gamma': cfg.UPDATE_THRESHOLD,  # 基线更新的阈值因子,新的参考值小于gamma*参考值时才更新
-    'k_final': cfg.K_FINAL # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大
+    'k_final': cfg.K_FINAL, # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大
+    'k_rl_threshold': cfg.K_RL_THRESHOLD # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
     }
 
 cem_hyperparams = {

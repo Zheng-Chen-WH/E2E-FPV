@@ -53,11 +53,12 @@ POS_LOSS_WEIGHT = 1.0 # 相对位置损失权重
 ROT_LOSS_WEIGHT = 1.0  # 相对姿态损失权重
 VEL_LOSS_WEIGHT = 1.0  # 相对速度损失权重
 ANG_VEL_LOSS_WEIGHT = 1.0 # 相对角速度损失权重
-DAGGER_LOSS_WEIGHT = 1 # DAGGER损失权重
+DAGGER_LOSS_WEIGHT = 0.5 # DAGGER损失权重;SACfD里是模仿学习尺度放缩用的
 EVAL_FREQ = 1 #训练过程中每多少个epoch之后进行测试
 BASELINE_UPDATE = 500 # 计算rl与il混合权重时的update次数间隔
 UPDATE_THRESHOLD = 0.5  # 基线更新的阈值因子,新的参考值小于gamma*参考值时才更新
 K_FINAL = 2.5 # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大,2.0的时候似乎比较合适
+K_RL_THRESHOLD = UPDATE_THRESHOLD ** 3 # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
 
 
 # 穿门任务专用参数
