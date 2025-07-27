@@ -312,3 +312,12 @@
 # 7.16
 + 有点积重难返的感觉，重新从零训一个，上一轮的模型都放在/472gb卷/models底下
 + learning from an unqualified teacher
+
+# 7.24
++ 开始设计混合rl与il的研究范式，先看论文
+  + Reinforcement Learning from Imperfect Demonstrations：
+    + 提出NAC（Normalized Actor-Critic）算法
+    + 离散动作
+
+# 7.25
++ 决定先参考gemini的意见，用两个Q网络估计值的差作为权重（衡量自信程度）

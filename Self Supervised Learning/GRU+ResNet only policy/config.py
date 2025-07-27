@@ -106,7 +106,7 @@ R_CONTROL_COST_MATRIX_GPU = torch.tensor(R_CONTROL_COST_NP, dtype=torch.float32,
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP = np.diag([
     250.0, 0.5, 200.0,  # x,y,z位置
-    100.0, 10.0, 100.0,   # x,y,z速度
+    50.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
 ])
@@ -115,7 +115,7 @@ Q_STATE_COST_MATRIX_GPU = torch.tensor(Q_STATE_COST_NP, dtype=torch.float32, dev
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP = np.diag([
     250.0, 0.5, 200.0,  # x,y,z位置
-    100.0, 10.0, 100.0,   # x,y,z速度
+    50.0, 10.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
 ])
@@ -125,7 +125,7 @@ Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(Q_TERMINAL_COST_NP, dtype=torch.float3
 # 索引：0-2: 位置 (x,y,z), 3-5: 速度 (vx,vy,vz), 6-9: 姿态 (p,r,y), 10-12: 角速度 (wx,wy,wz)
 Q_STATE_COST_NP_TWO = np.diag([
     500.0, 0.5, 300.0,  # x,y,z位置
-    150.0, 5.0, 100.0,   # x,y,z速度
+    50.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
 ])
@@ -134,7 +134,7 @@ Q_STATE_COST_MATRIX_GPU_TWO = torch.tensor(Q_STATE_COST_NP_TWO, dtype=torch.floa
 # 终端状态代价矩阵
 Q_TERMINAL_COST_NP_TWO = np.diag([
     500.0, 0.5, 300.0,  # x,y,z位置
-    150.0, 5.0, 100.0,   # x,y,z速度
+    50.0, 5.0, 100.0,   # x,y,z速度
     10.0, 100.0, 100.0, 100.0,     # 姿态
     100.0, 10.0, 100.0      # 角速度
 ])

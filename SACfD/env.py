@@ -3,9 +3,6 @@ import airsim
 from datetime import datetime
 import time
 import math
-import matplotlib.pyplot as plt
-import os
-from sac import SAC
 import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
@@ -190,11 +187,13 @@ class env:
         else:
             relative_next_target_pos = relative_pos_target
             relative_next_target_vel = - fpv_vel
+        
+        # 给辅助头的标签要/10
         return np.concatenate((fpv_pos, fpv_vel, fpv_attitude, fpv_angular_vel)), \
             np.concatenate((fpv_vel, attitude_6d, fpv_angular_vel, 
                             relative_pos_door_one, relative_vel_door_one,  
                             relative_pos_door_two, relative_vel_door_two, relative_pos_target)), \
-                            relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
+                            relative_next_target_pos/10.0, attitude_9d, relative_next_target_vel/10.0, fpv_angular_vel
     
     def get_img_sequence(self):
         img_vector = []
@@ -203,8 +202,10 @@ class env:
             # 计算当前时间
             # deviation=0.0 # 不同门框错开
             # elapsed_time = time.time() - self.start_time
-            self._update_door_positions(self.elapsed_time) # 更新门位置
+            # 等待下一帧
+            time.sleep(self.img_time)
             self.elapsed_time = self.elapsed_time + self.img_time
+            self._update_door_positions(self.elapsed_time) # 更新门位置
             self.client.simPause(True)
             _, _, pos, atti, vel, angular = self.get_drone_state()
             relative_next_target_pos.append(pos)
@@ -227,8 +228,6 @@ class env:
                 img_tensor = self.transform(Image.fromarray(img_rgb))
                 img_vector.append(img_tensor)  # 添加到序列
             self.client.simPause(False)
-            # 等待下一帧
-            time.sleep(self.img_time)
         
         relative_next_target_pos = np.stack(relative_next_target_pos)
         attitude_9d = np.stack(attitude_9d)
@@ -352,13 +351,13 @@ class env:
 
         self.info = 0
         self.done = False
-        self.past_actions = np.array([0.6, 0.6, 0.6, 0.6,
-                                0.6, 0.6, 0.6, 0.6,
-                                0.6, 0.6, 0.6, 0.6])
+        # self.past_actions = np.array([0.6, 0.6, 0.6, 0.6,
+        #                         0.6, 0.6, 0.6, 0.6,
+        #                         0.6, 0.6, 0.6, 0.6])
         self.final_pi_target = np.array([self.final_target_state[0], self.final_target_state[1]/47.0, self.final_target_state[2]/(-3.0)]) # 只看位置
 
         return current_drone_state, self.final_target_state, self.waypoints_y,\
-                self.door_z_positions, self.door_param, img_tensor, self.past_actions, Q_state, self.final_pi_target, self.elapsed_time,\
+                self.door_z_positions, self.door_param, img_tensor, Q_state, self.final_pi_target, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
 
     def step(self, control_signal):
@@ -368,15 +367,14 @@ class env:
         self.client.simPause(False)
         # print(f"control signal received by env:{control_signal}")
         self.client.moveByMotorPWMsAsync(float(control_signal[0]),float(control_signal[1]),float(control_signal[2]),float(control_signal[3]), self.DT*2)
-        time.sleep(self.DT-4*self.img_time) # 仿真持续步长
+        # time.sleep(self.DT-4*self.img_time) # 仿真持续步长
         
-        self.elapsed_time = self.elapsed_time + self.DT - 4 * self.img_time
-        # 理论上这里要过4个self.img_time
+        # self.elapsed_time = self.elapsed_time + self.DT - 4 * self.img_time
+        # 这里要过4个self.img_time
         img_tensor, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = self.get_img_sequence()
-        self._update_door_positions(self.elapsed_time) # 更新门位置
 
         # 往期动作也需要缩放
-        self.past_actions = np.concatenate((self.past_actions[4:], control_signal))
+        # self.past_actions = np.concatenate((self.past_actions[4:], control_signal))
         self.client.simPause(True)
         # self.start_time_step=time.time()
 
@@ -424,5 +422,5 @@ class env:
         # 5. 计算总奖励
         reward = R_progress + R_event + R_cost
         
-        return current_drone_state, img_tensor, self.past_actions, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time,\
+        return current_drone_state, img_tensor, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
