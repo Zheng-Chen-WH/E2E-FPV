@@ -331,6 +331,7 @@ class QNetwork(nn.Module):
         #torch.manual_seed(42) #所有随机数种子都用42
         # Q1 architecture
         self.Q_network_1=mlp([num_inputs+num_actions] + list(hidden_sizes)+[1], activation)
+        # nn.init.uniform_(self.Q_network_2[-1].weight, -1e-3, 1e-3)
 
         # Q2 architecture
         self.Q_network_2=mlp([num_inputs+num_actions] + list(hidden_sizes)+[1], activation)

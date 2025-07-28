@@ -32,8 +32,12 @@ class SAC(object):
 
         self.critic_target = QNetwork(args['Q_network_dim'], args['action_dim'], args['hidden_sizes'], args['activation']).to(self.device)
         self.critic.apply(init_weights)
+        nn.init.uniform_(self.critic.Q_network_1[-2].weight, -1e-3, 1e-3)
+        nn.init.uniform_(self.critic.Q_network_2[-2].weight, -1e-3, 1e-3)
         hard_update(self.critic_target, self.critic) #初始化的时候直接硬更新
         self.critic_target.apply(init_weights)
+        nn.init.uniform_(self.critic_target.Q_network_1[-2].weight, -1e-3, 1e-3)
+        nn.init.uniform_(self.critic_target.Q_network_2[-2].weight, -1e-3, 1e-3)
 
         # Target Entropy = −dim(A) (e.g. , -6 for HalfCheetah-v2) as given in the paper
         if self.automatic_entropy_tuning is True: #原论文直接认为目标熵就是动作空间维度乘积的负值，在这里就是Box的“体积”
@@ -156,7 +160,7 @@ class SAC(object):
             expl_gru_vel, expl_gru_ang = exploration_memory.sample(batch_size=batch_size)
 
         dag_pi_img, dag_action, dag_goal, dag_res_pos, dag_res_att, \
-            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=int(batch_size/2))
+            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=batch_size)
 
         # CPU上构建用于Critic更新的RL批次 (expert + exploration)
         rl_q_state_batch = torch.cat((torch.from_numpy(exp_q_state), torch.from_numpy(expl_q_state)), dim=0)
@@ -214,11 +218,14 @@ class SAC(object):
             min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) 
             target_q_value = rl_reward_batch + (1 - rl_done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi)
         qf1, qf2 = self.critic(rl_q_state_batch, rl_action_batch)  
-        # print(f"target_q_value:{target_q_value}, qf1:{qf1}, qf2:{qf2}") 
+        print(f"min_qf_next_target:{torch.mean(min_qf_next_target)}")
+        print(f"reward:{torch.mean(rl_reward_batch)}, target_q_value:{torch.mean(target_q_value)}, qf1:{torch.mean(qf1)}, qf2:{torch.mean(qf2)}") 
         qf_loss = F.mse_loss(qf1, target_q_value) + F.mse_loss(qf2, target_q_value)
+        print(f"q_loss:{qf_loss}")
         
         self.critic_optim.zero_grad()
         qf_loss.backward() 
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=1.0)
         self.critic_optim.step()
 
         # Policy 网络更新
@@ -233,7 +240,7 @@ class SAC(object):
 
         # 计算RL损失组件 (只使用pi中对应expert和exploration的部分)
         # policy_q_state_batch的大小是 (batch_size + batch_size)
-        rl_slice_start = int(batch_size/2) # Dagger数据之后是Expert数据+exploration数据
+        rl_slice_start = int(batch_size) # Dagger数据之后是Expert数据+exploration数据
         qf1_pi, qf2_pi = self.critic(policy_q_state_batch, pi[rl_slice_start:]) # policy_q_state是exp+explore
         min_qf_pi = torch.min(qf1_pi, qf2_pi)
         # 注意log_pi也需要切片
@@ -309,6 +316,7 @@ class SAC(object):
         
         self.policy_optim.zero_grad()
         total_policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
         self.policy_optim.step()
 
         # Alpha和Target Network更新

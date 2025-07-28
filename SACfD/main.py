@@ -31,7 +31,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'hidden_sizes':cfg.NN_HIDDEN_SIZE, # 隐藏层大小，带有激活函数的隐藏层层数等于这一列表大小
     'updates_per_episode':cfg.NN_TRAIN_EPOCHS_PER_STEP, # model updates per simulator step (default: 1) 每步对参数更新的次数
     'start_episodes':cfg.MIN_EPISODES_FOR_TRAINING, # 在开始训练之前进行动作以收集数据
-    'target_update_interval':5, # Value target update per no. of updates per step (default: 1) 目标网络更新的间隔
+    'target_update_interval':cfg.TARGET_UPDATE_INTERVAL, # 目标网络更新的间隔
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
@@ -43,7 +43,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
     'seed':20000323, #网络初始化的时候用的随机数种子  
-    'max_epoch':10000,
+    'max_epoch':50,
     'logs':False, #是否留存训练参数供tensorboard分析 
     'embedding_dim':128,
     'num_frames':4,
@@ -145,7 +145,7 @@ if args['task']=='Train':
     k = 0
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_67_-864.58_20.9404_16.4", evaluate=False)
+        agent.load_model("master_51_-2128.43_-423432183.2131_23.8", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
@@ -193,7 +193,7 @@ if args['task']=='Train':
             # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
             
             scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
-            if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0 and not done:
+            if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0:
                 expert_memory.push(img_tensor, Q_state, scaled_MPC_action, reward, next_img_tensor, next_Q_state, done, final_pi_target,
                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
             
@@ -235,7 +235,7 @@ if args['task']=='Train':
                     NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
                     MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
                     scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
-                    print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
+                    # print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
                     rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
                     next_drone_state, next_img_tensor, next_Q_state,\
                         reward, done, phase_idx, info, elapsed_time,\

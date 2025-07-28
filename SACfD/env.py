@@ -190,9 +190,9 @@ class env:
         
         # 给辅助头的标签要/10
         return np.concatenate((fpv_pos, fpv_vel, fpv_attitude, fpv_angular_vel)), \
-            np.concatenate((fpv_vel, attitude_6d, fpv_angular_vel, 
-                            relative_pos_door_one, relative_vel_door_one,  
-                            relative_pos_door_two, relative_vel_door_two, relative_pos_target)), \
+            np.concatenate((fpv_vel/10.0, attitude_6d, fpv_angular_vel, 
+                            relative_pos_door_one/10.0, relative_vel_door_one/10.0,  
+                            relative_pos_door_two/10.0, relative_vel_door_two/10.0, relative_pos_target/10.0)), \
                             relative_next_target_pos/10.0, attitude_9d, relative_next_target_vel/10.0, fpv_angular_vel
     
     def get_img_sequence(self):
@@ -421,7 +421,7 @@ class env:
             self.i += 1
 
         # 5. 计算总奖励
-        reward = R_progress + R_event + R_cost
+        reward = (R_progress + R_event + R_cost)/20
         
         return current_drone_state, img_tensor, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
