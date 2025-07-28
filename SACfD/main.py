@@ -142,7 +142,7 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 0
+    k = 1
     min_loss = 100
     if args['LOAD PARA']==True:
         agent.load_model("master_51_-2128.43_-423432183.2131_23.8", evaluate=False)
@@ -235,7 +235,7 @@ if args['task']=='Train':
                     NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
                     MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
                     scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
-                    # print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
+                    print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
                     rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
                     next_drone_state, next_img_tensor, next_Q_state,\
                         reward, done, phase_idx, info, elapsed_time,\

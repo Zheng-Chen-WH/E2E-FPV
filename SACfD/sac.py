@@ -218,10 +218,10 @@ class SAC(object):
             min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) 
             target_q_value = rl_reward_batch + (1 - rl_done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi)
         qf1, qf2 = self.critic(rl_q_state_batch, rl_action_batch)  
-        print(f"min_qf_next_target:{torch.mean(min_qf_next_target)}")
-        print(f"reward:{torch.mean(rl_reward_batch)}, target_q_value:{torch.mean(target_q_value)}, qf1:{torch.mean(qf1)}, qf2:{torch.mean(qf2)}") 
+        # print(f"min_qf_next_target:{torch.mean(min_qf_next_target)}")
+        # print(f"reward:{torch.mean(rl_reward_batch)}, target_q_value:{torch.mean(target_q_value)}, qf1:{torch.mean(qf1)}, qf2:{torch.mean(qf2)}") 
         qf_loss = F.mse_loss(qf1, target_q_value) + F.mse_loss(qf2, target_q_value)
-        print(f"q_loss:{qf_loss}")
+        # print(f"q_loss:{qf_loss}")
         
         self.critic_optim.zero_grad()
         qf_loss.backward() 
@@ -332,7 +332,7 @@ class SAC(object):
 
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
-        print(f"RL weight:{w_rl}, RL:{rl_policy_loss_component}, IL:{il_policy_loss_component}")
+        print(f"RL weight:{w_rl}, Q:{qf_loss}, RL:{rl_policy_loss_component}, IL:{il_policy_loss_component}")
         return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item()
 
     # Save model parameters
