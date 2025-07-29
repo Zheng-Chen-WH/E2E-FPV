@@ -122,8 +122,9 @@ time_start=time.time()
    expert_memory与exploration_memory参与训练Q网络
 """
 expert_memory = ReplayMemory(args['replay_size']) # 存储纯mpc示教数据
-dagger_memory = DAggerMemory(args['recent_buffer_size']) # DAgger过程的memory
 exploration_memory = ReplayMemory(args['replay_size'])
+dagger_memory = DAggerMemory(args['replay_size']) # DAgger过程的memory
+recent_memory = DAggerMemory(args['recent_buffer_size']) # 把recent加回来
 
 # 记录列表
 # all_episode_steps = []
@@ -244,7 +245,7 @@ if args['task']=='Train':
                         # Number of updates per step in environment 每次交互之后可以进行多次训练
                         for i in range(args['updates_per_episode']):
                             # Update parameters of all the networks
-                            policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, args['batch_size'], updates)
+                            policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)
                             # if policy_loss < min_loss:
                             #     min_loss = policy_loss
                             #     model_name = f'master_{k}_{avg_reward}'
@@ -259,7 +260,9 @@ if args['task']=='Train':
                     if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0:    
                         dagger_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
                                        relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
-                        exploration_memory.push(img_tensor, Q_state, scaled_MPC_action, reward, next_img_tensor, next_Q_state, done, final_pi_target,
+                        recent_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
+                                       relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
+                        exploration_memory.push(img_tensor, Q_state, NN_action, reward, next_img_tensor, next_Q_state, done, final_pi_target,
                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)
                     episode_reward += reward
                     current_drone_state = next_drone_state

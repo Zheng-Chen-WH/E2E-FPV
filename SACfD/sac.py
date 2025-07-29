@@ -147,7 +147,7 @@ class SAC(object):
         self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
         return action.detach().cpu().numpy()[0]
 
-    def update_parameters(self, expert_memory, dagger_memory, exploration_memory, batch_size, updates):
+    def update_parameters(self, expert_memory, dagger_memory, exploration_memory, recent_memory, batch_size, updates):
     # 数据准备阶段 (在CPU上准备好所有数据, 然后一次性转移)
 
         # 1. 从各个Buffer采样 (仍然是Numpy数组)
@@ -160,7 +160,10 @@ class SAC(object):
             expl_gru_vel, expl_gru_ang = exploration_memory.sample(batch_size=batch_size)
 
         dag_pi_img, dag_action, dag_goal, dag_res_pos, dag_res_att, \
-            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=batch_size)
+            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=int(batch_size/2))
+        
+        rec_pi_img, rec_action, rec_goal, rec_res_pos, rec_res_att, \
+            rec_gru_vel, rec_gru_ang = recent_memory.sample(batch_size=int(batch_size/2))
 
         # CPU上构建用于Critic更新的RL批次 (expert + exploration)
         rl_q_state_batch = torch.cat((torch.from_numpy(exp_q_state), torch.from_numpy(expl_q_state)), dim=0)
@@ -173,21 +176,21 @@ class SAC(object):
         
         # CPU上构建用于Policy更新的统一批次 (dagger + expert + exploration)
         # 把所有用于策略更新的状态和目标都拼接起来，后面用切片的方法再分开
-        policy_pi_img_batch = torch.cat((torch.from_numpy(dag_pi_img), torch.from_numpy(exp_pi_img), torch.from_numpy(expl_pi_img)), dim=0)
-        policy_goal_batch = torch.cat((torch.from_numpy(dag_goal), torch.from_numpy(exp_goal), torch.from_numpy(expl_goal)), dim=0)
+        policy_pi_img_batch = torch.cat((torch.from_numpy(dag_pi_img), torch.from_numpy(rec_pi_img), torch.from_numpy(exp_pi_img), torch.from_numpy(expl_pi_img)), dim=0)
+        policy_goal_batch = torch.cat((torch.from_numpy(dag_goal), torch.from_numpy(rec_goal), torch.from_numpy(exp_goal), torch.from_numpy(expl_goal)), dim=0)
         
         # policy_q_state批次包含了策略网络需要评估的所有状态
         policy_q_state_batch = torch.cat((torch.from_numpy(exp_q_state), torch.from_numpy(expl_q_state)), dim=0) # Dagger数据没有Q状态
 
         # 用于计算IL Loss的“真值”动作 (dagger + expert)
         # 注意：探索数据没有对应的专家动作，我们可以用零向量填充，但更简单的做法是在计算loss时只使用相应部分
-        il_action_batch = torch.cat((torch.from_numpy(dag_action), torch.from_numpy(exp_action)), dim=0)
+        il_action_batch = torch.cat((torch.from_numpy(dag_action), torch.from_numpy(rec_action), torch.from_numpy(exp_action)), dim=0)
         
         # 用于辅助损失的真值
-        policy_res_pos_batch = torch.cat((torch.from_numpy(dag_res_pos), torch.from_numpy(exp_res_pos), torch.from_numpy(expl_res_pos)), dim=0)
-        policy_res_att_batch = torch.cat((torch.from_numpy(dag_res_att), torch.from_numpy(exp_res_att), torch.from_numpy(expl_res_att)), dim=0)
-        policy_gru_vel_batch = torch.cat((torch.from_numpy(dag_gru_vel), torch.from_numpy(exp_gru_vel), torch.from_numpy(expl_gru_vel)), dim=0)
-        policy_gru_ang_batch = torch.cat((torch.from_numpy(dag_gru_ang), torch.from_numpy(exp_gru_ang), torch.from_numpy(expl_gru_ang)), dim=0)
+        policy_res_pos_batch = torch.cat((torch.from_numpy(dag_res_pos), torch.from_numpy(rec_res_pos), torch.from_numpy(exp_res_pos), torch.from_numpy(expl_res_pos)), dim=0)
+        policy_res_att_batch = torch.cat((torch.from_numpy(dag_res_att), torch.from_numpy(rec_res_att), torch.from_numpy(exp_res_att), torch.from_numpy(expl_res_att)), dim=0)
+        policy_gru_vel_batch = torch.cat((torch.from_numpy(dag_gru_vel), torch.from_numpy(rec_gru_vel), torch.from_numpy(exp_gru_vel), torch.from_numpy(expl_gru_vel)), dim=0)
+        policy_gru_ang_batch = torch.cat((torch.from_numpy(dag_gru_ang), torch.from_numpy(rec_gru_ang), torch.from_numpy(exp_gru_ang), torch.from_numpy(expl_gru_ang)), dim=0)
 
         # 一次性将所有数据转移到GPU
         device = self.device
@@ -232,15 +235,15 @@ class SAC(object):
         # 对全部数据统一的策略批次进行一次前向传播
         pi, log_pi, _, resnet_output, gru_output, _ = self.policy.sample(policy_pi_img_batch, policy_goal_batch)
         
-        # 计算IL损失组件 (只使用pi中对应dagger和expert的部分)
+        # 计算IL损失组件 (只使用pi中对应dagger, recent和expert的部分)
         # il_action_batch的大小是 (dagger的batch_size + exp的batch_size)
         # policy_batch的顺序是dagger+expert+exploration
-        il_slice_size = il_action_batch.shape[0]
-        il_policy_loss_component = physics_MSE(pi[:il_slice_size], il_action_batch)
+        il_slice_size = int(il_action_batch.shape[0]/2)
+        il_policy_loss_component = physics_MSE(pi[:il_slice_size], il_action_batch[:il_slice_size]) + physics_MSE(pi[il_slice_size:il_slice_size*2], il_action_batch[il_slice_size:])
 
         # 计算RL损失组件 (只使用pi中对应expert和exploration的部分)
         # policy_q_state_batch的大小是 (batch_size + batch_size)
-        rl_slice_start = int(batch_size) # Dagger数据之后是Expert数据+exploration数据
+        rl_slice_start = int(batch_size) # Dagger+recent数据之后是Expert数据+exploration数据
         qf1_pi, qf2_pi = self.critic(policy_q_state_batch, pi[rl_slice_start:]) # policy_q_state是exp+explore
         min_qf_pi = torch.min(qf1_pi, qf2_pi)
         # 注意log_pi也需要切片
