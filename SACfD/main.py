@@ -43,7 +43,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
     'seed':20000323, #网络初始化的时候用的随机数种子  
-    'max_epoch':50,
+    'max_epoch':10000,
     'logs':False, #是否留存训练参数供tensorboard分析 
     'embedding_dim':128,
     'num_frames':4,

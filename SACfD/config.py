@@ -39,7 +39,7 @@ NN_HIDDEN_SIZE = [256,128, 64]  # 隐藏层大小
 LEARNING_RATE = 1e-4  # 学习率
 BUFFER_SIZE = 2500  # buffer大小
 BATCH_SIZE = 32  # 训练batch size
-RECENT_BUFFER_SIZE = BATCH_SIZE * 4
+RECENT_BUFFER_SIZE = BATCH_SIZE 
 NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
 MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
 EPISODE_EXPLORE = 3  # 随机探索episode数
@@ -54,12 +54,12 @@ POS_LOSS_WEIGHT = 1.0 # 相对位置损失权重
 ROT_LOSS_WEIGHT = 1.0  # 相对姿态损失权重
 VEL_LOSS_WEIGHT = 1.0  # 相对速度损失权重
 ANG_VEL_LOSS_WEIGHT = 1.0 # 相对角速度损失权重
-DAGGER_LOSS_WEIGHT = 1.0 # DAGGER损失权重;SACfD里是模仿学习尺度放缩用的
+DAGGER_LOSS_WEIGHT = 2.0 # DAGGER损失权重;SACfD里是模仿学习尺度放缩用的
 EVAL_FREQ = 1 #训练过程中每多少个epoch之后进行测试
 BASELINE_UPDATE = 500 # 计算rl与il混合权重时的update次数间隔
 UPDATE_THRESHOLD = 0.8  # 基线更新的阈值因子,新的参考值小于gamma*参考值时才更新
 K_FINAL = 2.5 # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大,2.0的时候似乎比较合适
-K_RL_THRESHOLD = UPDATE_THRESHOLD ** 3 # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
+K_RL_THRESHOLD = UPDATE_THRESHOLD ** 2 # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
 
 
 # 穿门任务专用参数
