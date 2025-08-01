@@ -309,7 +309,7 @@ class SAC(object):
                 norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
                 norm_dis = min(disagreement / self.baseline_dis, 2.0)
                 
-                hybrid_metric = max(norm_td, norm_dis)
+                hybrid_metric = norm_td  * norm_dis
                 w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
 
             w_il = 1 - w_rl
@@ -335,6 +335,7 @@ class SAC(object):
 
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
+        print(f"td_error:{norm_td}, norm_dis:{norm_dis}")
         print(f"RL weight:{w_rl}, Q:{qf_loss}, RL:{rl_policy_loss_component}, IL:{il_policy_loss_component}")
         return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item()
 

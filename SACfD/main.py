@@ -35,7 +35,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': False, #是否读取参数
+    'LOAD PARA': True, #是否读取参数
     'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
@@ -143,10 +143,10 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 1
+    k = 167
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_51_-2128.43_-423432183.2131_23.8", evaluate=False)
+        agent.load_model("master_166_-33.45_19.8575_44.6", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
