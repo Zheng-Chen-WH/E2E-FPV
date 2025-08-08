@@ -100,6 +100,7 @@ git clone <URL> .
     ```
     (随后输入账号Dendrobium，密码AAaa,,11)
 7. push时产生冲突意味着本地文件和远程仓库在同一个文件的同一部分都做了修改。需要手动解决这些冲突，然后再次git add冲突文件，并git commit来完成合并。
+
 ## 4. 上传大文件（以模型pt文件为例）
 ```
 # 对于 Ubuntu
@@ -131,4 +132,27 @@ git gc --prune=now --aggressive
 git push --force --all
 git push --force --tags
 ```
+## 6.本地和远程仓库同时修改的情况
 
+1. 比较本地与远程的差异
+```
+git status
+git fetch github # 拉取远程版本的最新改动，而不直接合并
+git --no-pager diff # 不使用分页器
+```
+
+2. 保留本地版本：
+```
+推送本地更改
+```
+
+3. 保留远程版本
+```
+git reset --hard github/master #重置本地文件到远程版本
+```
+
+4. 处理未跟踪的文件
+```
+git clean -n # 查看这些文件并决定是否删除
+git clean -f # 删除未跟踪文件
+```
