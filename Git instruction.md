@@ -132,7 +132,7 @@ git gc --prune=now --aggressive
 git push --force --all
 git push --force --tags
 ```
-## 6.本地和远程仓库同时修改的情况
+## 6.本地和远程仓库同时修改且二选一
 
 1. 比较本地与远程的差异
 ```
@@ -143,7 +143,8 @@ git --no-pager diff # 不使用分页器
 
 2. 保留本地版本：
 ```
-推送本地更改
+# 推送本地更改 
+git push --force github master
 ```
 
 3. 保留远程版本
@@ -156,3 +157,25 @@ git reset --hard github/master #重置本地文件到远程版本
 git clean -n # 查看这些文件并决定是否删除
 git clean -f # 删除未跟踪文件
 ```
+
+## 7.本地和远程仓库同时修改且需要合并
+
+1. 提交本地修改
+```
+git add .
+git commit -m "xxx"
+```
+
+2. 合并远程修改
+```
+git pull github master
+```
+
+3. 修改
+  1. 打开提示有冲突的文件。
+  2. 你会看到类似 <<<<<<< HEAD，=======，>>>>>>> 这样的标记。
+  3. 你需要手动编辑文件，删除这些标记，并决定保留哪些代码。
+  4. 保存文件后，使用 git add . 将解决后的文件标记为“已解决”。
+  5. 最后，运行 git commit 来完成这次合并。
+
+4. 再次推送本地代码
