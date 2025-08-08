@@ -143,10 +143,10 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 167
+    k = 283
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_166_-33.45_19.8575_44.6", evaluate=False)
+        agent.load_model("master_282_-0.85_10.9239_27.4", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
@@ -336,7 +336,7 @@ if args['task']=='Train':
             break
 
 if args['task']=='Test':
-    agent.load_model('master_124_2053.2_15.0179_60')
+    agent.load_model('master_278_103.76_15.1242_47.4')
     time_start = time.time()
     episodes = 10
     done_num = 0
@@ -350,26 +350,29 @@ if args['task']=='Test':
         current_drone_state, final_target_state, waypoints_y,\
                         door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
                              relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
-        MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
         agent.reset()
         while True:
-            NN_action = agent.select_action(img_tensor, final_pi_target, evaluate=True)  # 开始输出actor网络动作
-            MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
-            scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
+            NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
             rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
             next_drone_state, next_img_tensor, next_Q_state,\
                 reward, done, phase_idx, info, elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
-            episode_reward += reward 
-            
+            episode_reward += reward
             current_drone_state = next_drone_state
             img_tensor = next_img_tensor
+            # past_actions = next_past_actions
             Q_state = next_Q_state
+            episode_steps += 1
+            avg_reward+=reward
             if info:
+                success=True
                 done_num+=1
             if done or episode_steps>200:
+                # if episode_steps >= 50:
+                #     model_name = f'master_{k}_{round(episode_reward,2)}_{round(policy_loss,4)}_{episode_steps}'
+                #     agent.save_model(model_name)
+                #     k += 1
                 break
-        avg_reward += episode_reward
         print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
     avg_reward = avg_reward / episodes
     #writer.add_scalar('avg_reward/test', avg_reward, i_episode)
@@ -377,4 +380,3 @@ if args['task']=='Test':
     print("----------------------------------------")
     print("Test Episodes: {}, Avg. Reward: {},done num:{}".format(episodes, round(avg_reward, 4),done_num))
     print("----------------------------------------")
-    print((time_end-time_start)/1000)
