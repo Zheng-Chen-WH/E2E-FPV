@@ -411,7 +411,7 @@ class env:
             self.done=True
             self.info=0
             self.i+=1
-        elif np.linalg.norm(Q_state[18:21]) < self.target_distance:
+        elif np.linalg.norm(Q_state[18:21]) < self.target_distance * 10: # 之前归一化的时候除了10，这里要乘回去
             R_event += 1000
             self.done = True
             self.info = 1
