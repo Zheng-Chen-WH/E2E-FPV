@@ -179,3 +179,18 @@ git pull github master
   5. 最后，运行 git commit 来完成这次合并。
 
 4. 再次推送本地代码
+
+## 8.忽略所有Pycache
+
+1. 在项目根目录创建或修改 .gitignore 文件
+```
+gitbash
+touch .gitignore
+```
+
+2. 编辑.gitignore
+
+```
+# 忽略所有名为 __pycache__ 的文件夹
+__pycache__/ 
+```
