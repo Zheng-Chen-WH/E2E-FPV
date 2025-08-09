@@ -281,11 +281,13 @@ class SAC(object):
                 else:
                     # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
                     if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
-                        self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
+                        # self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
+                        self.target_baseline_td = candidate_td
                         self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
                     
                     if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
-                        self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
+                        # self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
+                        self.target_baseline_dis = candidate_dis
                         self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
 
                     print("--- Baseline re-evaluated ---")
