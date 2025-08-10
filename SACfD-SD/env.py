@@ -407,12 +407,12 @@ class env:
         # 计算事件奖励 (R_event)
         R_event = self.phase_idx * 100
         if collided:
-            R_event -= 1000
+            R_event -= 200
             self.done=True
             self.info=0
             self.i+=1
         elif np.linalg.norm(Q_state[18:21]) < self.target_distance / 10: # 之前归一化的时候除了10，这里要乘回去
-            R_event += 1000
+            R_event += 500
             self.done = True
             self.info = 1
             self.i += 1
