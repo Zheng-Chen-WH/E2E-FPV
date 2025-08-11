@@ -1,15 +1,8 @@
-实验
-1. 轨迹平滑
-2. 实验定量分析
-3. 定性分析（网络）
-主图
-+ 草图
-主表
-+ excel
 
-# Learning FPV End-to-end Guidance in Dynamic Enviroment from an Incompetent Teacher 
+# Learning FPV End-to-end Guidance in Dynamic Enviroment from an Incompetent Teacher      
 陈铮
 
+------
 ## 脚本列表
 | 文件名 | 描述 |
 |---|---|
@@ -24,7 +17,7 @@
 | `sac.py` | SACfD算法位置，包含参数更新逻辑、模型存储与读取 |
 | `test.py` | 代码测试文件 |
 | `utils.py` | 一些共用函数 |
-
+---
 ## 脚本细节
 ### analytical_model_gpu.py
 使用 PyTorch 实现的无人机（四旋翼）动力学模拟器。   
@@ -40,7 +33,7 @@
 调用simulate_horizon函数，输入初始状态批次、pwm序列批次与单步长度，输出状态序列批次构成的轨迹批次；每步预测调用self._dynamics_step函数。
 
 ### CEM-MPC.py  
-本脚本实现**MPC算法**，具体采用的是**交叉熵方法（Cross-Entropy Method, CEM）+MPPI算法**作为其核心的优化器。
+本脚本实现**MPC算法**，具体采用的是**交叉熵方法（Cross-Entropy Method, CEM）+MPPI算法**作为其核心的优化器。    
 **主要功能和逻辑**
 + CEM-MPC 控制器: 算法核心，用来为无人机计算出用于监督的控制指令。
 + 预测与优化:
@@ -179,7 +172,7 @@ sac.py是整个SACfD (SAC from Demonstration)学习算法的核心与灵魂，�
   + 强化学习 (RL) 损失：标准的SAC策略目标。策略网络会尝试选择那些被评论家网络评为具有高Q值的动作（即能带来高未来回报的动作），要求智能体能够发现可能比专家更优的策略，或在专家未曾遇到的情况下也能良好表现。
   + 辅助任务损失：这是来自多任务学习的损失。网络对位置、速度等的预测会与模拟器提供的标签进行比较，要求视觉特征提取器学习到具有物理意义的表征。
 
-**4. 自适应权重调节机制（创新点）**
+**4. 自适应权重调节机制（创新点）**      
 采用动态权重机制平衡模仿学习（IL）和强化学习（RL）的损失
 + 衡量不确定性与准确性：在每一步更新时，算法会计算两个关键指标：
     + Q值分歧 (Q-Disagreement)：两个评论家网络预测值之间的差异。高分歧意味着智能体对其当前策略的价值不确定。
@@ -209,7 +202,7 @@ sac.py是整个SACfD (SAC from Demonstration)学习算法的核心与灵魂，�
 
 ### utils.py
 包含了一系列工具函数。
-1. **Q网络更新**
+1. **Q网络更新**     
 soft_update与hard_update函数用于管理主网络和目标网络之间的参数同步。
    + soft_update(target, source, tau)
      + 功能：软更新
@@ -218,7 +211,7 @@ soft_update与hard_update函数用于管理主网络和目标网络之间的参�
    + hard_update(target, source)
      + 功能：硬更新
      + 用途：在训练开始时，将主网络的参数复制到目标网络。
-2. **基于物理的加权MSE损失函数 (项目创新点之一)**
+2. **基于物理的加权MSE损失函数 (项目创新点之一)**     
 这两个函数是本项目在模仿学习部分的重要创新之一。
    + **weighted_mse_loss(y_pred, y_true)**   
      + 解决的问题：标准的均方误差（MSE）对所有样本一视同仁。专家数据中急转、急停等“关键”动作很少，模型可能会倾向于只学习普通动作，而忽略那些稀有但至关重要的关键动作，最终导致模型只会输出平均数据。
@@ -236,7 +229,7 @@ soft_update与hard_update函数用于管理主网络和目标网络之间的参�
 + create_log_gaussian: 计算一个值在给定高斯分布下的对数概率。在计算中直接使用对数可以避免因概率值过小导致的数值下溢问题，是SAC等算法中的标准操作。
 + logsumexp: 一个在数值上更稳定的方式来计算 log(sum(exp(x)))。直接计算 exp(x) 可能会因 x 过大而溢出，此函数通过数学技巧避免了这个问题。
 + map_value: 一个简单的线性映射函数，可以将一个值从一个范围 [a, b] 等比例地映射到另一个范围 [c, d]。这是一个通用的工具函数。
-
+---
 ## 创新点归纳：
 
 ### 一：解决高速穿越动态门框场景下无人机端到端导航问题
@@ -247,66 +240,73 @@ soft_update与hard_update函数用于管理主网络和目标网络之间的参�
   + 高动态性：无人机自身的高速运动与门的动态运动相结合，对控制系统的实时性、精确性和鲁棒性要求更高。
 
 ### 二：结合模仿与强化学习的自适应策略学习框架
-整个系统的顶层设计，利用**模型预测控制（CEM-MPPI）**作为“离线专家”，提供较高质量的控制序列。然后，通过强化学习+模仿学习训练神经网络来学习并进一步优化控制。
+整个系统的顶层设计，利用**模型预测控制（CEM-MPPI）**作为“离线专家”，提供较高质量的控制序列。然后，通过强化学习+模仿学习训练神经网络来学习并进一步优化控制。    
 **优势**      
 + 结合两者之长：模仿学习提供了良好的初始策略和稳定性，避免了强化学习初期的盲目探索；强化学习则赋予了智能体在专家未曾遇到的情况下进行泛化和超越专家的能力。
 + 解决了“冷启动”问题：相比于从零开始的强化学习，通过专家数据进行预热，极大地提升了学习效率和样本利用率。
 + DAgger范式应用：使用DAgger（数据集聚合）流程，即让学习中的智能体去探索环境，然后用专家来标记智能体遇到的新状态。
  
 ### 三：基于学习状态评估的自适应动态权重机制
-主要具有独创性的部分，设计了能够自我评估学习状态并自动调整权重的系统。
-**核心思想**：通过两个代理指标，时序差分误差（TD-Error）和Q值分歧（Q-Disagreement），量化智能体学习过程的准确性和不确定性。
+主要具有独创性的部分，设计了能够自我评估学习状态并自动调整权重的系统。    
+**核心思想**：通过两个代理指标，时序差分误差（TD-Error）和Q值分歧（Q-Disagreement），量化智能体学习过程的准确性和不确定性。    
 **主要技术细节**     
   + 动态基准线：不比较指标的绝对值，而是将它们与一个缓慢变化且单向更新的动态基准线进行比较。这个基准线只在学习取得显著进步时才会降低，而在学习恶化时会立即跟上，这使得判断非常稳健。
   + 自适应权重计算：当Q网络准确时，系统提高强化学习（RL）的权重，鼓励智能体进行更多探索；当Q网络不准确时，系统提高模仿学习（IL）的权重，迫使智能体回归到更稳妥的专家策略。
 
 ### 四：融合时空信息的端到端控制网络与多任务学习监督
-**核心思想**：采用ResNet+GRU结构分别提取视觉输入的空间特征和时间动态。
+**核心思想**：采用ResNet+GRU结构分别提取视觉输入的空间特征和时间动态。    
 **优势**：
   + 动态预测：利用GRU实现相对运动状态估计与预测。
   + 多任务学习：增加了辅助监督任务，要求ResNet辅助输出预测相对位姿，并要求GRU辅助预测相对速度/角速度。
 
 ### 五：基于物理的模仿学习损失函数 (Physics-Informed Loss)
-**核心思想**：将模仿学习的损失函数转换到总推力与三轴力矩空间。
+**核心思想**：将模仿学习的损失函数转换到总推力与三轴力矩空间。    
 **工作原理**：
   + 设计conversion函数将四个PWM信号转换为总推力和三轴力矩。
   + 损失函数计算的是模型产生的推力/力矩与专家产生的推力/力矩之间的差异，并集成了加权机制，对动作幅度偏离批次平均值的动作给予更高的惩罚权重。
+---
+## 可能需要进行的实验
 
-## 实验结果表格
-Filenames are structured as `<VEHICLE>_<TRAJECTORY>_<METHOD>_<CONDITION>.csv`
-For specific details please refer to the article.
+### 定量实验主表格    
+| 实验项目 | 备注 |任务成功率 | 穿越速度 | 
+|:---:|---|---|---|
+| Baseline | • 纯MPC<br>• UZH的论文Learning High-Level Policies for Model Predictive Control |
+| 完整模型| • 还在训练 |
+| 纯模仿学习 | • 学习时把强化学习部分置零|
+| 纯强化学习 | • 学习时把模仿学习部分置零 |
+|移除多任务学习|• 学习时把辅助任务损失部分置零|
+|验证物理加权损失函数？|• 模仿学习部分换成普通MSE|
 
-| Field | Description |
-|---|---|
-| `<VEHICLE>` | • `custom`: drone built using consumer off-the-shelf components with PX4 flight controller<br>• `intel`: Intel-Aero RTF Drone, used for data collection for Neural-Fly-Transfer controller |
-| `<TRAJECTORY>`| • `random3`: randomized trajectory created by randomly sampling 2 waypoints and generating a smooth spline from the current position through both waypoints; continuous derivatives through snap<br>• `random2`: similar to random3 except only one waypoint is generated<br>• `figure8`: a lemniscate trajectory given by `(x(t),y(t),z(t)) = (1.25 * sin(t), 0, 0.75 * sin(2 * t)` |
-| `<METHOD>` | • `'baseline'`: nonlinear baseline control<br>• `'indi'`: incremental nonlinear dynamics inversion control<br>• `'L1'`: L1 adaptive control<br>• `'NF-C'`: Neural-Fly-Constant, our adaptive controller without any learning<br>• `'NF-T'`: Neural-Fly-Transfer, our learning based adaptive control with the ML model trained on data from the Intel-Aero drone<br>• `'NF'`: Neural-Fly, our learning based adaptive control with the ML model trained on data collected with the custom drone, |
-| `<CONDITION>`| wind condition for experiments, where the number corresponds to the fan array duty cycle and converts to<br>• `nowind` = 0 m/s<br>• `10wind` = 1.3 m/s<br>• `20wind` = 2.5m/s<br>• `30wind` = 3.7 m/s<br>• `35wind` = 4.2 m/s<br>• `40wind` = 4.9 m/s<br>• `50wind` = 6.1 m/s<br>• `70wind` = 8.5 m/s<br>• `70p20sint` = 8.5+2.4sin(t) m/s<br>• `100wind` = 12.1 m/s |
+### 定性实验
++ 对比SACfD训练模型飞行轨迹与纯模仿学习、纯强化、模型轨迹验证平滑+PWM值变化
++ ~~对ResNet、GRU输出特征向量可视化？~~
++ （定量）比较辅助输出头结果与标签，验证其对物理量提取能力
+---
+## 主图草稿
+![主图草稿](主图草稿.jpg)
 
-## Experiment data
-Additionally, the data from the experiment results present in the paper is provided. To load the data, run the following in python
-```python
-import utils
-Data = utils.load_data(folder='data/experiment')
-```
-This will load all of the experiment data as a list of dictionaries. The ith experiment, field field, at the jth timestep, can be accessed with Data[i][field][j]. Most fields are ndarrays except the metadata fields, pulled from the filename. Available fields are given in the following table.
+**参考论文主图**
++ Vision-Based Deep Reinforcement Learning of UAV Autonomous Navigation Using Privileged Information         
+![Vision-Based Deep Reinforcement Learning of UAV Autonomous Navigation Using Privileged Information](1.jpg "Vision-Based Deep Reinforcement Learning of UAV Autonomous Navigation Using Privileged Information")
++ Champion-level drone racing using deep reinforcement learning         
+![Champion-level drone racing using deep reinforcement learning](2.jpg "Champion-level drone racing using deep reinforcement learning")
++ Learning High-Speed Flight in the Wild
+![Learning High-Speed Flight in the Wild](3.jpg "Learning High-Speed Flight in the Wild")
++ Actor-Critic Model Predictive Control
+![Actor-Critic Model Predictive Control](4.jpg "Actor-Critic Model Predictive Control")
++ Demonstrating Agile Flight from Pixels  without State Estimation
+![Demonstrating Agile Flight from Pixels  without State Estimation](5.jpg "Demonstrating Agile Flight from Pixels  without State Estimation")
 
-|field|description|
-|---|---|
-|'t'	|time in seconds
-|'p'	| position vector in meters
-|'p_d'	|desired position vector in meters
-|'v'	|velocity vector in m/s
-|'v_d'	|desired velocity in m/s
-|'q'	|attitude represented as a unit quaternion
-|'R'	|rotation matrix (body frame to world frame)
-|'𝜔'| angular velocity in rad/s
-|'T_sp'	|thrust setpoint sent to the flight controller
-|'q_sp'	|attitude command sent to the flight controller
-|'hover_throttle'|	throttle at hover computed as a best fit function of the battery voltage
-|'fa'	|aerodynamic residual force computed using numerical differentiation of v and T_sp, q, and hover_throttle
-|'pwm'	|motor speed commands from the flight controller
-|'vehicle'	|<VEHICLE> field from filename
-|'trajectory'|	<TRAJECTORY> field from filename
-|'method'	|<METHOD> field from filename
-|'condition'|	<CONDITION> field from filename
+---   
+## 后续任务
+1. 主算法调参确保可以稳定实现训练
+  + 反复崩溃的时候反而可以训练，可能与on-policy有关？考虑：
+    1. 进一步缩小buffer 
+    2. 定期清空buffer相应调整混合学习权重
+    3. 直接换PPO
+    4. 其他调参，如reward设计
+2. 做前述实验
+
+---   
+
+先写方法部分
