@@ -61,6 +61,7 @@ class ReplayMemory:
     
     def clear(self):
         self.buffer = []
+        self.position = 0
 
 class DAggerMemory:
     def __init__(self, capacity):
@@ -110,3 +111,4 @@ class DAggerMemory:
     
     def clear(self):
         self.buffer = []
+        self.position = 0
