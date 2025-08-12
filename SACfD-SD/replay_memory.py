@@ -62,6 +62,7 @@ class ReplayMemory:
     
     def clear(self):
         self.buffer = []
+        self.position = 0
 
 class DAggerMemory:
     def __init__(self, capacity):
@@ -111,7 +112,7 @@ class DAggerMemory:
     
     def clear(self):
         self.buffer = []
-
+        self.position = 0
 class RolloutBuffer:
     def __init__(self, n_steps, state_dims, action_dim, gae_lambda=0.95, gamma=0.99):
         self.n_steps = n_steps
@@ -185,4 +186,4 @@ class RolloutBuffer:
             batch_advantages = torch.from_numpy(self.advantages[batch_indices]).to(device)
             batch_returns = torch.from_numpy(self.returns[batch_indices]).to(device)
             
-            yield batch_obs, batch_actions, batch_log_probs, batch_advantages, batch_returns
+            yield batch_obs, batch_actions, batch_log_probs, batch_advantages, batch_return
