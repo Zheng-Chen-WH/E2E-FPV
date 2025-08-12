@@ -58,6 +58,9 @@ class ReplayMemory:
         with open(save_path, "rb") as f:
             self.buffer = pickle.load(f)
             self.position = len(self.buffer) % self.capacity
+    
+    def clear(self):
+        self.buffer = []
 
 class DAggerMemory:
     def __init__(self, capacity):
@@ -104,3 +107,6 @@ class DAggerMemory:
         with open(save_path, "rb") as f:
             self.buffer = pickle.load(f)
             self.position = len(self.buffer) % self.capacity
+    
+    def clear(self):
+        self.buffer = []

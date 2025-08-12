@@ -85,6 +85,27 @@ class SAC(object):
     def reset(self): # 为了发挥GRU时序能力，现在每次训练前要重置GRU的隐藏状态
         self.hidden_state = None
 
+    def training_reset(self):
+        self.avg_td_error = None
+        self.avg_disagreement = None
+        # 归一化分母（基线），初始化为1.0
+        self.baseline_td = 1.0
+        self.baseline_dis = 1.0
+        
+        # 目标基线，在第一次评估时设定
+        self.target_baseline_td = 1.0
+        self.target_baseline_dis = 1.0
+
+        # 初始化基线下降的每步增量初始化为0
+        self.delta_baseline_td = 0.0
+        self.delta_baseline_dis = 0.0
+
+        # 用于在每个窗口内收集数据
+        self._window_td_errors = []
+        self._window_disagreements = []
+        self._is_initial_baseline_set = False # 标记是否已完成第一次基线设置
+        self.avg_il_loss = None
+
     def six_d_to_rot_mat(self, pred_6d):
         """
         将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
@@ -281,13 +302,13 @@ class SAC(object):
                 else:
                     # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
                     if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
-                        # self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
-                        self.target_baseline_td = candidate_td
+                        self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
+                        # self.target_baseline_td = candidate_td
                         self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
                     
                     if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
-                        # self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
-                        self.target_baseline_dis = candidate_dis
+                        self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
+                        # self.target_baseline_dis = candidate_dis
                         self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
 
                     print("--- Baseline re-evaluated ---")
@@ -311,8 +332,8 @@ class SAC(object):
                 norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
                 norm_dis = min(disagreement / self.baseline_dis, 2.0)
                 
-                # hybrid_metric = norm_td  * norm_dis
-                hybrid_metric = max(norm_td, norm_dis)
+                hybrid_metric = norm_td  * norm_dis
+                # hybrid_metric = max(norm_td, norm_dis)
                 w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
 
             w_il = 1 - w_rl

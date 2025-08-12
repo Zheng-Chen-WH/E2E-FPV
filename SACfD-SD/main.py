@@ -326,6 +326,13 @@ if args['task']=='Train':
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
 
+        if i_episode % (args['evaluate_freq'] * 50) == 0: # 模拟定期崩溃,十个模型崩溃一次
+            expert_memory.clear()
+            exploration_memory.clear()
+            dagger_memory.clear()
+            recent_memory.clear()
+            agent.training_reset()
+
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集
             # memory.save_buffer("master")
