@@ -341,3 +341,56 @@ class QNetwork(nn.Module):
         x1 = self.Q_network_1(xu)
         x2 = self.Q_network_2(xu)
         return x1, x2
+
+class ActorCriticPPO(nn.Module):
+    def __init__(self, policy_class, policy_kwargs, device):
+        super(ActorCriticPPO, self).__init__()
+        self.device = device
+        
+        # 1. 演员（Actor）网络
+        # 我们直接复用您精心设计的、带有ResNet+GRU和辅助任务的策略网络
+        self.policy_net = policy_class(**policy_kwargs).to(device)
+
+        # 2. 评论家（Critic）网络
+        # 它接收与策略网络相同的GRU输出特征，但只输出一个V值
+        # 这里的 feature_dim 必须与您 Policy_net 中 GRU 输出的特征维度一致
+        feature_dim = 256 + 3 # 假设GRU输出256维，目标点3维
+        
+        self.value_net = nn.Sequential(
+            nn.Linear(feature_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        ).to(device)
+
+    def forward(self, pi_img, goal):
+        """
+        PPO的前向传播需要同时返回动作、对数概率、熵和V值
+        """
+        # --- Actor部分 ---
+        # 复用策略网络的前向传播逻辑
+        action_dist, features, aux_outputs = self.policy_net(pi_img, goal, return_features=True)
+        action = action_dist.sample()
+        log_prob = action_dist.log_prob(action).sum(axis=-1)
+        entropy = action_dist.entropy().sum(axis=-1)
+
+        # --- Critic部分 ---
+        # 使用策略网络提取的特征来计算V值
+        value = self.value_net(features)
+
+        return action, log_prob, entropy, value.flatten(), aux_outputs
+        
+    def evaluate_actions(self, pi_img, goal, action):
+        """
+        在更新时，需要根据给定的动作重新评估其对数概率、熵和V值
+        """
+        # --- Actor部分 ---
+        action_dist, features, aux_outputs = self.policy_net(pi_img, goal, return_features=True)
+        log_prob = action_dist.log_prob(action).sum(axis=-1)
+        entropy = action_dist.entropy().sum(axis=-1)
+        
+        # --- Critic部分 ---
+        value = self.value_net(features)
+        
+        return log_prob, entropy, value.flatten(), aux_outputs

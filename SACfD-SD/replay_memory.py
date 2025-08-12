@@ -2,6 +2,7 @@ import random
 import numpy as np
 import os
 import pickle
+import torch
 
 class ReplayMemory:
     def __init__(self, capacity):
@@ -110,3 +111,78 @@ class DAggerMemory:
     
     def clear(self):
         self.buffer = []
+
+class RolloutBuffer:
+    def __init__(self, n_steps, state_dims, action_dim, gae_lambda=0.95, gamma=0.99):
+        self.n_steps = n_steps
+        self.gae_lambda = gae_lambda
+        self.gamma = gamma
+        
+        # 定义存储空间
+        self.observations = {'pi_img': np.zeros((n_steps, *state_dims['pi_img']), dtype=np.float32),
+                             'goal': np.zeros((n_steps, *state_dims['goal']), dtype=np.float32)}
+        self.actions = np.zeros((n_steps, action_dim), dtype=np.float32)
+        self.rewards = np.zeros((n_steps,), dtype=np.float32)
+        self.dones = np.zeros((n_steps,), dtype=np.bool_)
+        self.log_probs = np.zeros((n_steps,), dtype=np.float32)
+        self.values = np.zeros((n_steps,), dtype=np.float32)
+        
+        # GAE计算所需
+        self.advantages = np.zeros((n_steps,), dtype=np.float32)
+        self.returns = np.zeros((n_steps,), dtype=np.float32)
+        
+        self.ptr = 0
+        self.full = False
+
+    def add(self, obs, action, reward, done, value, log_prob):
+        for key, val in obs.items():
+            self.observations[key][self.ptr] = val
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.dones[self.ptr] = done
+        self.values[self.ptr] = value
+        self.log_probs[self.ptr] = log_prob
+        self.ptr += 1
+
+    def compute_returns_and_advantages(self, last_value, last_done):
+        """
+        在rollout结束后，从后往前计算GAE和Returns
+        """
+        last_advantage = 0
+        for t in reversed(range(self.n_steps)):
+            if t == self.n_steps - 1:
+                next_non_terminal = 1.0 - last_done
+                next_value = last_value
+            else:
+                next_non_terminal = 1.0 - self.dones[t + 1]
+                next_value = self.values[t + 1]
+            
+            delta = self.rewards[t] + self.gamma * next_value * next_non_terminal - self.values[t]
+            last_advantage = delta + self.gamma * self.gae_lambda * next_non_terminal * last_advantage
+            self.advantages[t] = last_advantage
+        
+        self.returns = self.advantages + self.values
+
+    def get(self, batch_size, device):
+        """
+        创建一个生成器，用于在PPO更新期间按mini-batch产出数据
+        """
+        # 确保所有数据都在一个大的numpy数组中
+        indices = np.random.permutation(self.n_steps)
+        
+        # 展平数据
+        obs_flat = {key: val.reshape(-1, *val.shape[1:]) for key, val in self.observations.items()}
+        actions_flat = self.actions.reshape(-1, self.actions.shape[-1])
+        
+        for start in range(0, self.n_steps, batch_size):
+            end = start + batch_size
+            batch_indices = indices[start:end]
+            
+            # 将numpy数据转为torch tensor
+            batch_obs = {key: torch.from_numpy(obs_flat[key][batch_indices]).to(device) for key in obs_flat}
+            batch_actions = torch.from_numpy(actions_flat[batch_indices]).to(device)
+            batch_log_probs = torch.from_numpy(self.log_probs[batch_indices]).to(device)
+            batch_advantages = torch.from_numpy(self.advantages[batch_indices]).to(device)
+            batch_returns = torch.from_numpy(self.returns[batch_indices]).to(device)
+            
+            yield batch_obs, batch_actions, batch_log_probs, batch_advantages, batch_returns

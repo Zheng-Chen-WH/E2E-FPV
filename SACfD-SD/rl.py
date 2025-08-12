@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam, AdamW
 from utils import soft_update, hard_update, weighted_mse_loss, physics_MSE
-from model import GaussianPolicy, QNetwork, init_weights
+from model import GaussianPolicy, QNetwork, init_weights, ActorCriticPPO
 import torch.nn as nn
 import time
 import numpy as np
@@ -393,3 +393,84 @@ class SAC(object):
                 self.policy.train()
                 self.critic.train()
                 self.critic_target.train()
+
+class PPO:
+    def __init__(self, policy_class, policy_kwargs, device, args):
+        self.device = device
+        self.actor_critic = ActorCriticPPO(policy_class, policy_kwargs, device).to(device)
+        self.optimizer = Adam(self.actor_critic.parameters(), lr=args['lr'], eps=1e-5)
+        
+        # PPO 超参数
+        self.clip_range = args.get('clip_range', 0.2)
+        self.n_epochs = args.get('n_epochs', 10)
+        self.vf_coef = args.get('vf_coef', 0.5)
+        self.ent_coef = args.get('ent_coef', 0.0)
+        self.max_grad_norm = args.get('max_grad_norm', 0.5)
+
+    @torch.no_grad()
+    def select_action(self, obs):
+        # 将numpy obs转为tensor
+        pi_img_tensor = torch.from_numpy(obs['pi_img']).float().to(self.device).unsqueeze(0)
+        goal_tensor = torch.from_numpy(obs['goal']).float().to(self.device).unsqueeze(0)
+        
+        action, log_prob, _, value, _ = self.actor_critic(pi_img_tensor, goal_tensor)
+        
+        return action.cpu().numpy()[0], value.cpu().numpy()[0], log_prob.cpu().numpy()[0]
+
+    def update(self, rollout_buffer, dagger_memory, batch_size, aux_loss_weight, il_weight, il_loss_fn):
+        # 1. 计算优势的均值和标准差，用于标准化
+        advantages = torch.from_numpy(rollout_buffer.advantages).to(self.device)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # 2. 训练N个Epochs
+        for epoch in range(self.n_epochs):
+            # 从DAgger buffer采样模仿学习数据
+            il_pi_img, il_goal, il_expert_actions, il_labels = dagger_memory.sample(batch_size)
+            il_pi_img = torch.from_numpy(il_pi_img).float().to(self.device)
+            il_goal = torch.from_numpy(il_goal).float().to(self.device)
+            il_expert_actions = torch.from_numpy(il_expert_actions).float().to(self.device)
+
+            # 从Rollout buffer获取RL数据
+            for rl_obs, rl_actions, rl_old_log_probs, rl_advantages, rl_returns in rollout_buffer.get(batch_size, self.device):
+                # 重新评估RL数据的动作
+                rl_log_probs, rl_entropy, rl_values, rl_aux_outputs = self.actor_critic.evaluate_actions(
+                    rl_obs['pi_img'], rl_obs['goal'], rl_actions
+                )
+
+                # --- 计算RL损失 ---
+                # 策略损失 (Clipped Surrogate Objective)
+                ratio = torch.exp(rl_log_probs - rl_old_log_probs)
+                surr1 = ratio * rl_advantages
+                surr2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * rl_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+
+                # 价值损失
+                value_loss = F.mse_loss(rl_values, rl_returns)
+                
+                # 熵损失
+                entropy_loss = -torch.mean(rl_entropy)
+
+                # --- 计算IL损失 ---
+                # 行为克隆损失
+                il_action_dist, _, il_aux_outputs = self.actor_critic.policy_net(il_pi_img, il_goal, return_features=False)
+                bc_loss = il_loss_fn(il_action_dist.mean, il_expert_actions) # 使用您定义的physics_MSE
+
+                # 辅助任务损失 (可以结合RL和IL的辅助输出)
+                # 这里简化为只用IL的
+                aux_pos_loss = F.mse_loss(il_aux_outputs['resnet_pos'], il_labels['resnet_pos'])
+                # ... 其他辅助损失
+                total_aux_loss = aux_pos_loss # + ...
+
+                # --- 最终总损失 ---
+                # 这里的 il_weight 可以由您的动态权重机制提供
+                loss = (policy_loss + 
+                        self.ent_coef * entropy_loss + 
+                        self.vf_coef * value_loss +
+                        il_weight * bc_loss + 
+                        aux_loss_weight * total_aux_loss)
+
+                # --- 优化步骤 ---
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+                self.optimizer.step()
