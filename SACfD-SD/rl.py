@@ -223,17 +223,17 @@ class SAC(object):
             [t.float().to(device) for t in [policy_pi_img_batch, policy_goal_batch, policy_q_state_batch, il_action_batch, policy_res_pos_batch, policy_res_att_batch, policy_gru_vel_batch, policy_gru_ang_batch]]
 
         # LR热启动
-        if updates < self.warm_up_steps:
-            # 计算当前步的学习率：从0线性增长到 base_lr
-            current_lr = (updates / self.warm_up_steps) * self.base_lr
+        # if updates < self.warm_up_steps:
+        #     # 计算当前步的学习率：从0线性增长到 base_lr
+        #     current_lr = (updates / self.warm_up_steps) * self.base_lr
             
-            # 应用到 Critic 优化器
-            for param_group in self.critic_optim.param_groups:
-                param_group['lr'] = current_lr
+        #     # 应用到 Critic 优化器
+        #     for param_group in self.critic_optim.param_groups:
+        #         param_group['lr'] = current_lr
             
-            # 应用到 Policy 优化器
-            for param_group in self.policy_optim.param_groups:
-                param_group['lr'] = current_lr
+        #     # 应用到 Policy 优化器
+        #     for param_group in self.policy_optim.param_groups:
+        #         param_group['lr'] = current_lr
 
         # Critic 网络更新 (逻辑不变, 使用准备好的rl批次)
         with torch.no_grad():
