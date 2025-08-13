@@ -280,7 +280,7 @@ if args['task']=='Train':
                         break
                 print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
 
-        if i_episode % (args['evaluate_freq'] * 1) == 0 and args['eval'] is True: # 5轮mpc+dagger之后进行一轮测试
+        if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True: # 5轮mpc+dagger之后进行一轮测试
             avg_reward = 0.
             episodes = args['evaluate_freq'] * 5 # 交替强化和dagger
             done_num=0
