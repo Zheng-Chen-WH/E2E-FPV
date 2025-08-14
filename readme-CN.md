@@ -2,6 +2,33 @@
 # Learning FPV End-to-end Guidance in Dynamic Enviroment from an Incompetent Teacher      
 陈铮
 
+----
+
+## 代码使用
+### 环境配置（windows）
+1. UE4、AirSim参考https://blog.csdn.net/Legendyyy/article/details/126044186，到第三步装好airsim即可
+2. Anaconda配置虚拟环境，安装torch（符合驱动和CUDA版本）、airsim
+```
+pip install msgpack-rpc-python
+pip install airsim
+```
+3. 把我的台式机下D:\AirSim\Unreal\Environments\MPC复制到目标电脑的AirSim文件夹同位置
+4. UE4启动上述位置下的MPC.uproject文件，启动关卡
+5. 复制我的台式机的桌面\E2E FPV文件夹到目标电脑上，在IDE上运行
+6. UE4编辑界面点击“播放”，出现无人机画面后可以按M键切换到固定机位
+7. 运行代码文件夹下main.py
+
+### 跑实验
+1. main.py #39行：'Train'为训练，'Test'为推理
+2. main.py #38行：True为加载阶段保存模型训练，False为从头训练
+3. 如果选择测试：main.py #347行文件名改为形如'master_278_103.76_15.1242_47.4'的（去掉_model），其中103.76的位置代表reward，越高理论上性能越好
+4. 如果选择加载模型继续训练：类似修改main.py #149来选择加载的模型
+5. 修改loss以验证不同trick效果：rl.py #342行
+  + 纯强化学习：w_rl = 1, w_il = 0
+  + 纯模仿学习：w_rl = 0, w_il = 1
+  + 移除多任务学习：删掉self.aux_loss_weight * aux_loss项
+
+
 ------
 ## 脚本列表
 | 文件名 | 描述 |
@@ -14,7 +41,7 @@
 | `main.py` | 算法主文件，与SAC更新、memory、env、mpc等部分交互 |
 | `model.py` | 定义神经网络结构及前向传播 |
 | `replay_memory.py` | 定义memory相关函数，包含RLmemory和DAggermemory |
-| `sac.py` | SACfD算法位置，包含参数更新逻辑、模型存储与读取 |
+| `rl.py` | SACfD与PPO算法位置，包含参数更新逻辑、模型存储与读取 |
 | `test.py` | 代码测试文件 |
 | `utils.py` | 一些共用函数 |
 ---
@@ -131,7 +158,7 @@ main.py是整个项目的主文件，将所有模块整合在一起，实现整�
 + 循环缓冲区: 两个类都使用了先进先出的固定容量的循环列表作为底层存储。
 + 随机采样: 都提供了一个 sample 方法，可以从缓冲区中随机抽取一批数据，并将其整理成适合神经网络输入的格式。
 
-### sac.py
+### rl.py
 sac.py是整个SACfD (SAC from Demonstration)学习算法的核心与灵魂，它将模仿学习与强化学习相结合进行学习。
 
 **概述**  
