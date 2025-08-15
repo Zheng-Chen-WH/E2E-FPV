@@ -13,7 +13,7 @@ import math
 # 超参数字典
 args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True)
     'Q_network_dim': cfg.Q_STATE_DIM, # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
-    'Pi_mlp_dim': cfg.PI_STATE_DIM, # Pi网络mlp部分额外输入的状态:暂定之前三次PWM和目标位置
+    'Pi_mlp_dim': cfg.PI_STATE_DIM, # Pi网络mlp部分额外输入的状态:暂定目标位置
     'action_dim': cfg.ACTION_DIM,  # 动作向量维度，4个PWM
     'resnet_aux_dim': cfg.RESNET_AUX_DIM, # ResNet辅助头输出维度，相对下一目标的位置+6D连续表示姿态
     'gru_aux_dim': cfg.GRU_AUX_DIM, # GRU辅助头输出维度，相对下一目标的速度+3D角速度
