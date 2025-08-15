@@ -54,7 +54,7 @@ class SAC(object):
         self.policy.apply(init_weights)  
         nn.init.constant_(self.policy.log_std_layer.weight, 0)
         nn.init.constant_(self.policy.log_std_layer.bias, 0)
-        nn.init.uniform_(self.policy.mu_layer.weight, -1.0, 1.0) 
+        nn.init.uniform_(self.policy.mu_layer.weight, -0.5, 0.5) 
         self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01)
         self.hidden_state = None
         self.avg_td_error = None
@@ -404,8 +404,6 @@ class PPO(object):
         self.n_steps = args['PPO']['n_steps']  # 每个更新周期收集的步数
         self.batch_size = args['batch_size']
         self.n_epochs = args['n_epochs']
-        self.gamma = args['gamma']
-        self.gae_lambda = args['PPO']['lambda']
         self.clip_range = args['PPO']['clip_range']
         self.clip_range_vf = args['PPO']['clip_range_vf'] 
         self.ent_coef = args['alpha']
@@ -525,152 +523,126 @@ class PPO(object):
         它使用一个rollout_buffer来存储on-policy数据，并结合off-policy数据进行训练。
         由于PPO的on-policy特性，此函数应在数据收集和GAE计算完成后被调用。
         """
-        # 从您的多个经验池中采样数据，这里expert仅用于il了
-        exp_pi_img, exp_action, exp_goal,\
-            exp_res_pos, exp_res_att, exp_gru_vel, exp_gru_ang = expert_memory.sample(batch_size = self.batch_size)
-        dag_pi_img, dag_action, dag_goal, dag_res_pos, dag_res_att, \
-            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=int(self.batch_size/2))
-        rec_pi_img, rec_action, rec_goal, rec_res_pos, rec_res_att, \
-            rec_gru_vel, rec_gru_ang = recent_memory.sample(batch_size=int(self.batch_size/2))
-        # 用于计算IL Loss的“真值”动作和输入状态 (dagger + recent + expert)
-        il_action_batch = torch.cat((torch.from_numpy(dag_action), torch.from_numpy(rec_action), torch.from_numpy(exp_action)), dim=0)
-        il_pi_img_batch = torch.cat((torch.from_numpy(dag_pi_img), torch.from_numpy(rec_pi_img), torch.from_numpy(exp_pi_img)), dim=0)
-        il_goal_batch = torch.cat((torch.from_numpy(dag_goal), torch.from_numpy(rec_goal), torch.from_numpy(exp_goal)), dim=0)
-        
-        # 这里假设您的rollout_buffer也提供了类似的数据
-        # 为了简化，我们直接使用采样数据作为PPO的"batch"
-        # TODO: 您需要根据您的数据收集方式调整这一部分
-        
-        # ---- 数据准备 (与您的SAC代码类似，但增加了特权状态) ----
-        # 为了演示，我们仅用专家数据。您需要像SAC中那样拼接所有来源的数据。
-        pi_img_batch, state_batch, priv_state_batch, action_batch, reward_batch, \
-        next_priv_state_batch, done_batch, old_log_probs_batch, old_values_batch, \
-        res_pos_batch, res_att_batch, gru_vel_batch, gru_ang_batch = \
-            [torch.from_numpy(t).float().to(self.device) for t in [exp_pi_img, exp_state, exp_priv_state, exp_action, exp_reward, exp_next_priv_state, exp_done, exp_log_prob, exp_value, exp_res_pos, exp_res_att, exp_gru_vel, exp_gru_ang]]
-        
-        # 2. 计算优势 (GAE) 和 价值目标 (Returns)
-        with torch.no_grad():
-            # 获取下一个状态的价值 V(s_t+1)
-            # 注意: Actor不使用特权状态，所以可以传入一个零张量
-            _, _, next_values, _, _, _ = self.policy.forward(
-                pi_img_batch, state_batch, next_priv_state_batch 
-            )
-            next_values = next_values.flatten()
-            
-            # GAE 计算
-            advantages = torch.zeros_like(reward_batch)
-            last_gae_lam = 0
-            # 这里我们假设数据是按时间顺序排列的，如果不是，则GAE效果会打折扣
-            # 对于随机采样的batch，实际上是1-step TD advantage
-            for t in reversed(range(len(reward_batch))):
-                if t == len(reward_batch) - 1:
-                    next_non_terminal = 1.0 - done_batch[t]
-                    next_value = next_values[t]
-                else:
-                    next_non_terminal = 1.0 - done_batch[t]
-                    next_value = old_values_batch[t+1]
-                
-                delta = reward_batch[t] + self.gamma * next_value * next_non_terminal - old_values_batch[t]
-                advantages[t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
-            
-            returns = advantages + old_values_batch
-
-        # 优势标准化
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-        # 3. PPO 优化循环
+        # 1. PPO 优化循环 (外层循环: epochs)
         for epoch in range(self.n_epochs):
-            # 使用模型的 `evaluate_actions` 方法获取新值
-            values, log_prob, entropy = self.policy.evaluate_actions(
-                pi_img_batch, state_batch, action_batch, priv_state_batch
-            )
-            values = values.flatten()
+            # 从RolloutBuffer获取一个生成器，它会提供打乱顺序的on-policy小批次数据
+            for rl_batch in rollout_buffer.get(self.batch_size):
+                
+                # --- 2. 准备数据 ---
+                # a. On-Policy数据 (来自RolloutBuffer, 用于RL)
+                pi_imgs = rl_batch['pi_imgs']
+                states = rl_batch['states']
+                privileged_states = rl_batch['privileged_states']
+                actions = rl_batch['actions']
+                old_values = rl_batch['values']
+                old_log_probs = rl_batch['log_probs']
+                advantages = rl_batch['advantages']
+                returns = rl_batch['returns']
+                
+                # b. Off-Policy数据 (从您的经验池采样, 用于IL)
+                # 我们采样与on-policy小批次同样大小的数据
+                il_batch_size = rl_batch['actions'].shape[0]
+                exp_bs = il_batch_size // 2
+                dag_bs = (il_batch_size - exp_bs) // 2
+                rec_bs = il_batch_size - exp_bs - dag_bs
 
-            # --- 计算PPO损失 ---
-            # 策略损失 (Policy Loss / PG Loss)
-            ratio = torch.exp(log_prob - old_log_probs_batch)
-            surr1 = advantages * ratio
-            surr2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-            pg_loss = -torch.min(surr1, surr2).mean()
+                exp_pi_img, exp_action, exp_goal, exp_res_pos, exp_res_att, exp_gru_vel, exp_gru_ang = expert_memory.sample(exp_bs)
+                dag_pi_img, dag_action, dag_goal, dag_res_pos, dag_res_att, dag_gru_vel, dag_gru_ang = dagger_memory.sample(dag_bs)
+                rec_pi_img, rec_action, rec_goal, rec_res_pos, rec_res_att, rec_gru_vel, rec_gru_ang = recent_memory.sample(rec_bs)
 
-            # 价值损失 (Value Loss)
-            if self.clip_range_vf is not None:
-                values_clipped = old_values_batch + torch.clamp(
-                    values - old_values_batch, -self.clip_range_vf, self.clip_range_vf
-                )
-                vf_loss1 = F.mse_loss(values, returns)
-                vf_loss2 = F.mse_loss(values_clipped, returns)
-                vf_loss = torch.max(vf_loss1, vf_loss2)
-            else:
-                vf_loss = F.mse_loss(values, returns)
+                # 拼接成用于IL的完整批次
+                il_pi_img_batch = torch.from_numpy(np.concatenate((dag_pi_img, rec_pi_img, exp_pi_img))).float().to(self.device)
+                il_goal_batch = torch.from_numpy(np.concatenate((dag_goal, rec_goal, exp_goal))).float().to(self.device)
+                il_action_batch = torch.from_numpy(np.concatenate((dag_action, rec_action, exp_action))).float().to(self.device)
+                il_gt_pos = torch.from_numpy(np.concatenate((dag_res_pos, rec_res_pos, exp_res_pos))).float().to(self.device)
+                il_gt_att = torch.from_numpy(np.concatenate((dag_res_att, rec_res_att, exp_res_att))).float().to(self.device)
+                il_gt_vel = torch.from_numpy(np.concatenate((dag_gru_vel, rec_gru_vel, exp_gru_vel))).float().to(self.device)
+                il_gt_ang = torch.from_numpy(np.concatenate((dag_gru_ang, rec_gru_ang, exp_gru_ang))).float().to(self.device)
 
-            # 熵损失 (Entropy Loss)
-            entropy_loss = -torch.mean(entropy)
-            
-            # --- 计算您的自定义损失 ---
-            # IL 损失 (Imitation Loss)
-            # 您需要确定哪些数据用于IL。这里假设是整个batch
-            pi, _, _, resnet_output, gru_output, _ = self.policy.sample(
-                pi_img_batch, state_batch, priv_state_batch
-            )
-            il_loss = physics_MSE(pi, action_batch) # 使用您的物理MSE
+                # --- 3. 计算所有损失 ---
+                # a. RL损失 (PPO核心损失)
+                #    在on-policy数据上评估当前策略
+                values, log_prob, entropy = self.policy.evaluate_actions(pi_imgs, states, actions, privileged_states)
+                values = values.flatten()
+                
+                # 策略损失 (Policy Loss / PG Loss)
+                ratio = torch.exp(log_prob - old_log_probs)
+                surr1 = advantages * ratio
+                surr2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+                pg_loss = -torch.min(surr1, surr2).mean()
 
-            # 辅助损失 (Auxiliary Loss)
-            aux_loss = self.aux_loss(
-                resnet_output, gru_output, res_pos_batch, res_att_batch, gru_vel_batch, gru_ang_batch
-            )
-
-            # --- 自适应权重计算 (改造版本) ---
-            with torch.no_grad():
-                current_vf_loss = vf_loss.item()
-                self._window_vf_losses.append(current_vf_loss)
-
-                # 更新基线
-                if updates % self.baseline_update_window == 0:
-                    candidate_vf = np.mean(self._window_vf_losses) + 1e-8
-                    if not self._is_initial_baseline_set:
-                        self.baseline_vf = candidate_vf
-                        self.initial_vf = candidate_vf
-                        self.target_baseline_vf = candidate_vf
-                        self._is_initial_baseline_set = True
-                        print(f"--- Initial VF baseline set: {self.baseline_vf:.4f} ---")
-                    else:
-                        if candidate_vf > self.baseline_vf or candidate_vf < self.baseline_update_gamma * self.baseline_vf:
-                           self.target_baseline_vf = max(candidate_vf, self.initial_vf * self.k_rl_threshold)
-                           self.delta_baseline_vf = (self.baseline_vf - self.target_baseline_vf) / self.baseline_update_window
-                    self._window_vf_losses = []
-
-                self.baseline_vf -= self.delta_baseline_vf
-
-                # 计算权重
-                if not self._is_initial_baseline_set:
-                    w_rl = torch.tensor(0.0, device=self.device)
+                # 价值损失 (Value Loss)
+                if self.clip_range_vf is not None:
+                    values_clipped = old_values + torch.clamp(values - old_values, -self.clip_range_vf, self.clip_range_vf)
+                    vf_loss1 = F.mse_loss(values, returns)
+                    vf_loss2 = F.mse_loss(values_clipped, returns)
+                    vf_loss = torch.max(vf_loss1, vf_loss2)
                 else:
-                    # 使用价值损失的归一化值作为指标 (替代了td_error和disagreement的组合)
-                    norm_vf = min(current_vf_loss / self.baseline_vf, 2.0)
-                    w_rl = torch.exp(torch.tensor(-self.k_final * norm_vf, device=self.device))
-                w_il = 1 - w_rl
+                    vf_loss = F.mse_loss(values, returns)
 
-            # --- 总损失 ---
-            # PPO RL损失 = 策略损失 + 熵奖励
-            rl_loss = pg_loss + self.ent_coef * entropy_loss
-            
-            # 总损失 = (加权RL损失) + (加权IL损失) + (价值函数损失) + (辅助损失)
-            total_loss = (w_rl * rl_loss + 
-                          w_il * il_loss * self.dagger_weight + 
-                          self.vf_coef * vf_loss + 
-                          self.aux_loss_weight * aux_loss)
+                # 熵损失 (Entropy Loss)
+                entropy_loss = -torch.mean(entropy)
 
-            # --- 优化步骤 ---
-            self.optimizer.zero_grad()
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            self.optimizer.step()
-        
-        # --- 打印和返回日志 ---
+                # b. IL与辅助损失 (在off-policy数据上计算)
+                #    让当前策略处理IL数据，得到预测动作和辅助输出
+                #    注意: Critic的输入privileged_state在这里可以传一个零向量，因为它不参与IL损失计算
+                il_priv_dummy = torch.zeros(il_pi_img_batch.shape[0], self.args['privileged_dim']).to(self.device)
+                pi_il, _, _, resnet_output_il, gru_output_il, _ = self.policy.sample(il_pi_img_batch, il_goal_batch, il_priv_dummy)
+                
+                # 模仿学习损失
+                il_loss = physics_MSE(pi_il, il_action_batch) # 使用您的物理MSE
+
+                # 辅助任务损失
+                aux_loss = self.aux_loss(resnet_output_il, gru_output_il, il_gt_pos, il_gt_att, il_gt_vel, il_gt_ang)
+
+                # --- 4. 自适应权重计算 ---
+                with torch.no_grad():
+                    current_vf_loss = vf_loss.item()
+                    self._window_vf_losses.append(current_vf_loss)
+
+                    # 每个PPO update step（不是每个epoch或minibatch）更新一次基线
+                    if updates % self.baseline_update_window == 0 and len(self._window_vf_losses) > 0:
+                        candidate_vf = np.mean(self._window_vf_losses) + 1e-8
+                        if not self._is_initial_baseline_set:
+                            self.baseline_vf = candidate_vf
+                            self.initial_vf = candidate_vf
+                            self.target_baseline_vf = candidate_vf
+                            self._is_initial_baseline_set = True
+                            print(f"--- Initial VF baseline set: {self.baseline_vf:.4f} ---")
+                        else:
+                            if candidate_vf > self.baseline_vf or candidate_vf < self.baseline_update_gamma * self.baseline_vf:
+                                self.target_baseline_vf = max(candidate_vf, self.initial_vf * self.k_rl_threshold)
+                                self.delta_baseline_vf = (self.baseline_vf - self.target_baseline_vf) / self.baseline_update_window
+                        self._window_vf_losses = []
+
+                    self.baseline_vf -= self.delta_baseline_vf / self.n_epochs # 平滑更新
+
+                    # 计算权重
+                    if not self._is_initial_baseline_set:
+                        w_rl = torch.tensor(0.0, device=self.device)
+                    else:
+                        norm_vf = min(current_vf_loss / self.baseline_vf, 2.0)
+                        w_rl = torch.exp(torch.tensor(-self.k_final * norm_vf, device=self.device))
+                    w_il = 1 - w_rl
+
+                # --- 5. 计算总损失并优化 ---
+                rl_component = pg_loss + self.ent_coef * entropy_loss
+                
+                total_loss = (w_rl * rl_component + 
+                            w_il * il_loss * self.dagger_weight + 
+                            self.vf_coef * vf_loss + 
+                            self.aux_loss_weight * aux_loss)
+
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.optimizer.step()
+
+        # --- 6. 打印和返回日志 (在所有epochs和minibatches结束后) ---
         print(f"Update: {updates}, VF Loss: {vf_loss.item():.4f}, Norm VF: {norm_vf:.4f}, RL Weight: {w_rl.item():.4f}")
         print(f"Losses -> Total: {total_loss.item():.4f}, PG: {pg_loss.item():.4f}, IL: {il_loss.item():.4f}, Aux: {aux_loss.item():.4f}")
         
+        # 返回最后一个minibatch的损失值作为记录
         return total_loss.item(), pg_loss.item(), il_loss.item(), vf_loss.item()
     
     # Save model parameters

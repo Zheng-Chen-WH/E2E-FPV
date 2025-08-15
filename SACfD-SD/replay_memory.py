@@ -125,24 +125,27 @@ class RolloutBuffer:
     :param gamma: 折扣因子
     :param device: 计算设备 (cpu or cuda)
     """
-    def __init__(self, buffer_size: int, args: dict, gae_lambda: float = 0.95, gamma: float = 0.99, device: str = "cpu"):
+    def __init__(self, buffer_size, args):
         self.buffer_size = buffer_size
         self.args = args
-        self.gae_lambda = gae_lambda
-        self.gamma = gamma
-        self.device = device
+        self.gae_lambda = args['PPO']['lambda']
+        self.gamma = args['gamma']
+        self.device = torch.device("cuda" if args['cuda'] else "cpu")
 
         # 获取维度信息
-        pi_img_shape = (args['pi_img_seq_len'], 3, args['pi_img_size'], args['pi_img_size'])
+        pi_img_shape = (args['num_frames'], 3, 256, 144)
         state_dim = args['Pi_mlp_dim']
-        priv_state_dim = args['privileged_dim']
+        priv_state_dim = args['PPO']['V_network_dim'], # V网络输入维度
         action_dim = args['action_dim']
         aux_dims = {
             'pos': 3, 'att': 9, 'vel': 3, 'ang': 3
         }
 
         # 预先分配内存，比list.append()高效得多
-        self.pi_imgs = np.zeros((self.buffer_size,) + pi_img_shape, dtype=np.float32)
+        # 通过使用 np.zeros 一次性分配所需的内存，相比于使用 list.append() 动态扩展列表，这种方式在性能上更优
+        self.pi_imgs = np.zeros((self.buffer_size,) + pi_img_shape, dtype=np.float32) 
+        # self.buffer_size 表示数组的第一个维度的大小，通常用于存储多个样本（如经验回放中的样本数）。
+        # pi_img_shape 是一个元组，表示每个图像的形状（如高、宽、通道数等），通过 (self.buffer_size,) + pi_img_shape 组合成新的数组形状。
         self.states = np.zeros((self.buffer_size, state_dim), dtype=np.float32)
         self.privileged_states = np.zeros((self.buffer_size, priv_state_dim), dtype=np.float32)
         self.actions = np.zeros((self.buffer_size, action_dim), dtype=np.float32)
@@ -165,7 +168,8 @@ class RolloutBuffer:
         self.full = False
 
     def clear(self):
-        """清空Buffer，准备下一次rollout"""
+        """清空Buffer，准备下一次rollout
+        没有物理清零，只是逐个覆盖数据，内存保持不动"""
         self.pos = 0
         self.full = False
 
