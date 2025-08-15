@@ -395,7 +395,7 @@ class env:
             R_centering = - np.linalg.norm(Q_state[12 + self.phase_idx * 6 : 15 + self.phase_idx * 6]) # 相对下一个门的距离
             R_velocity_align = - np.linalg.norm(Q_state[15 + self.phase_idx * 6]) # 相对下一个门x方向的速度
 
-        R_progress = 0.2 * R_approach + 1.0 * R_centering + 5.0 * R_velocity_align # 进度奖励加权
+        R_progress = 0.2 * R_approach + 2.0 * R_centering + 5.0 * R_velocity_align # 进度奖励加权
 
         # 计算成本惩罚 (R_cost)
         R_action_cost = - 1.0 * np.linalg.norm(control_signal) # 控制代价
@@ -407,12 +407,12 @@ class env:
         # 计算事件奖励 (R_event)
         R_event = self.phase_idx * 100
         if collided:
-            R_event -= 200
+            R_event -= 50
             self.done=True
             self.info=0
             self.i+=1
         elif np.linalg.norm(Q_state[18:21]) < self.target_distance / 10: # 之前归一化的时候除了10，这里要乘回去
-            R_event += 500
+            R_event += 200
             self.done = True
             self.info = 1
             self.i += 1

@@ -29,7 +29,7 @@ MPC_STATE_DIM=13
 
 # 神经网络与训练参数 
 PI_STATE_DIM = 3  # Pi网络状态:目标位置
-Q_STATE_DIM = 21 # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对两个门的位置、速度、相对目标的位置
+Q_STATE_DIM = 21 # Q网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对一个门的位置、速度、相对目标的位置
 RESNET_AUX_DIM = 9 # ResNet辅助头输出维度，6D连续表示姿态+相对下一目标的位置
 GRU_AUX_DIM = 6 # GRU辅助头输出维度，相对下一目标的速度+3D角速度
 GRU_LAYER = 1 # GRU层数
@@ -38,9 +38,9 @@ ACTION_DIM = 4  # 动作向量维度，4个PWM
 NN_HIDDEN_SIZE = [256, 128, 64]  # 隐藏层大小
 LEARNING_RATE = 1e-4  # 学习率
 BUFFER_SIZE = 3000  # buffer大小
-BATCH_SIZE = 32  # 训练batch size
+BATCH_SIZE = 64  # 训练batch size
 RECENT_BUFFER_SIZE = BATCH_SIZE 
-NN_TRAIN_EPOCHS_PER_STEP = 1  # 每次训练时训练epoch数
+NN_TRAIN_EPOCHS_PER_STEP = 10  # 每次训练时训练epoch数; PPO是每个数据批次上优化的轮数
 MIN_EPISODES_FOR_TRAINING = 10  # 开始训练时最小episode数
 EPISODE_EXPLORE = 3  # 随机探索episode数
 SCALER_REFIT_FREQUENCY = 10  # 归一化参数更新频率
@@ -48,7 +48,7 @@ FIT_SCALER_SUBSET_SIZE = 2000  # 用于更新归一化参数的样本数
 NUM_TRANSFORMER_FRAMES = 4
 NUM_EPISODES = 10000  # 训练最大episode数
 TARGET_UPDATE_INTERVAL = 20 # 目标网络更新的间隔
-WARM_UP = 50 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
+WARM_UP = 100 # 学习率预热，在这些updates内学习率线性提升到设定的lr值
 AUX_LOSS_WEIGHT = 0.1 # 辅助头总损失权重
 POS_LOSS_WEIGHT = 1.0 # 相对位置损失权重
 ROT_LOSS_WEIGHT = 1.0  # 相对姿态损失权重
@@ -60,6 +60,15 @@ BASELINE_UPDATE = 500 # 计算rl与il混合权重时的update次数间隔
 UPDATE_THRESHOLD = 0.9  # 基线更新的阈值因子,新的参考值小于gamma*参考值时才更新
 K_FINAL = 2.5 # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大,2.5的时候似乎比较合适
 K_RL_THRESHOLD = UPDATE_THRESHOLD ** 2 # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
+# PPO核心超参数 (参考Stable Baselines 3)
+PPO={'n_steps': 2048, # 每个更新周期收集的步数
+     'lambda': 0.95, # GAE参数
+     'clip_range': 0.2, # PPO策略裁剪范围
+     'clip_range_vf': None, # PPO价值函数裁剪范围
+     'vf_coef': 0.5, # 价值函数损失系数
+     'max_grad_norm': 0.5, # 梯度裁剪范数
+     'V_network_dim': 21 # V网络状态：暂定无人机姿态（6D连续表示）、世界系速度和本体系角速度、相对一个门的位置、速度、相对目标的位置
+    } 
 
 
 # 穿门任务专用参数

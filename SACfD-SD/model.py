@@ -326,7 +326,7 @@ class GaussianPolicy(nn.Module):
         return super(GaussianPolicy, self).to(device)
 
 class QNetwork(nn.Module):
-    def __init__(self, num_inputs, num_actions, hidden_sizes,activation):
+    def __init__(self, num_inputs, num_actions, hidden_sizes, activation):
         super(QNetwork, self).__init__()
         #torch.manual_seed(42) #所有随机数种子都用42
         # Q1 architecture
@@ -343,54 +343,77 @@ class QNetwork(nn.Module):
         return x1, x2
 
 class ActorCriticPPO(nn.Module):
-    def __init__(self, policy_class, policy_kwargs, device):
+    """
+    非对称Actor-Critic模型，具有完全分离的输入路径：
+    - Actor: 输入为[图像特征, 目标向量], 用于在环境中决策。
+    - Critic: 输入仅为物理真值, 用于在训练中进行价值评估。
+    """
+    def __init__(self, embedding_dim, num_inputs, privileged_dim, num_actions, 
+                 hidden_sizes, activation, resnet_aux_outputs, gru_aux_outputs, 
+                 gru_layers, dropout):
         super(ActorCriticPPO, self).__init__()
-        self.device = device
         
-        # 1. 演员（Actor）网络
-        # 我们直接复用您精心设计的、带有ResNet+GRU和辅助任务的策略网络
-        self.policy_net = policy_class(**policy_kwargs).to(device)
+        # 视觉特征提取器
+        self.GRU = GRU(resnet_aux_outputs, embedding_dim, gru_aux_outputs, gru_layers=gru_layers, dropout=dropout)
+        
+        # Actor网络：输入维度为 图像特征+常规状态
+        actor_input_dim = embedding_dim + num_inputs
+        self.actor_mlp = mlp([actor_input_dim] + list(hidden_sizes), activation, activation)
+        self.mu_layer = nn.Linear(hidden_sizes[-1], num_actions)
+        self.log_std_layer = nn.Linear(hidden_sizes[-1], num_actions)
 
-        # 2. 评论家（Critic）网络
-        # 它接收与策略网络相同的GRU输出特征，但只输出一个V值
-        # 这里的 feature_dim 必须与您 Policy_net 中 GRU 输出的特征维度一致
-        feature_dim = 256 + 3 # 假设GRU输出256维，目标点3维
-        
-        self.value_net = nn.Sequential(
-            nn.Linear(feature_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-        ).to(device)
+        # Critic网络：输入维度仅为特权信息
+        critic_input_dim = privileged_dim
+        self.critic = mlp([critic_input_dim] + list(hidden_sizes)+[1], activation)
 
-    def forward(self, pi_img, goal):
+    def forward(self, img_sequence, state, privileged_state, hidden_state=None):
         """
-        PPO的前向传播需要同时返回动作、对数概率、熵和V值
+        定义前向传播，将输入分发给Actor和Critic。
         """
-        # --- Actor部分 ---
-        # 复用策略网络的前向传播逻辑
-        action_dist, features, aux_outputs = self.policy_net(pi_img, goal, return_features=True)
-        action = action_dist.sample()
-        log_prob = action_dist.log_prob(action).sum(axis=-1)
-        entropy = action_dist.entropy().sum(axis=-1)
+        # Actor
+        # 从图像序列中提取高级特征
+        features, resnet_preds, gru_preds, new_hidden_state = self.GRU(img_sequence, hidden_state)
+        
+        # 准备Actor的输入并计算策略
+        actor_input = torch.cat([features, state], 1)
+        # 先进行层归一化
+        # normalized_input = self.concat_norm(concatenated_input)
+        actor_features = self.actor_mlp(actor_input)
+        mean = self.mu_layer(actor_features)
+        log_std = self.log_std_layer(actor_features)
+        log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
+        std = torch.exp(log_std)
+        
+        # Critic前向传播
+        # Critic直接使用物理真值进行价值评估
+        Vvalue = self.critic(privileged_state)
+        
+        return mean, std, Vvalue, resnet_preds, gru_preds, new_hidden_state
 
-        # --- Critic部分 ---
-        # 使用策略网络提取的特征来计算V值
-        value = self.value_net(features)
+    def sample(self, img_sequence, state, privileged_state, hidden_state=None):
+        """
+        根据Actor的策略采样动作，并从Critic获取对应的状态价值。
+        """
+        mean, std, value, resnet_preds, gru_preds, new_hidden_state = self.forward(
+            img_sequence, state, privileged_state, hidden_state
+        )
+        
+        dist = Normal(mean, std)
+        action = dist.sample()
+        log_prob = dist.log_prob(action).sum(axis=-1)
+        
+        return action, log_prob, value, resnet_preds, gru_preds, new_hidden_state
 
-        return action, log_prob, entropy, value.flatten(), aux_outputs
-        
-    def evaluate_actions(self, pi_img, goal, action):
+    def evaluate_actions(self, img_sequence, state, action, privileged_state, hidden_state=None):
         """
-        在更新时，需要根据给定的动作重新评估其对数概率、熵和V值
+        在PPO更新时，重新评估旧数据点的状态价值和动作对数概率。
         """
-        # --- Actor部分 ---
-        action_dist, features, aux_outputs = self.policy_net(pi_img, goal, return_features=True)
-        log_prob = action_dist.log_prob(action).sum(axis=-1)
-        entropy = action_dist.entropy().sum(axis=-1)
+        mean, std, value, _, _, _ = self.forward(
+            img_sequence, state, privileged_state, hidden_state
+        )
         
-        # --- Critic部分 ---
-        value = self.value_net(features)
+        dist = Normal(mean, std)
+        log_prob = dist.log_prob(action).sum(axis=-1)
+        entropy = dist.entropy().sum(axis=-1)
         
-        return log_prob, entropy, value.flatten(), aux_outputs
+        return value, log_prob, entropy

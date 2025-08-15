@@ -26,7 +26,7 @@ pip install airsim
 5. 修改loss以验证不同trick效果：rl.py #342行
   + 纯强化学习：w_rl = 1, w_il = 0
   + 纯模仿学习：w_rl = 0, w_il = 1
-  + 移除多任务学习：删掉self.aux_loss_weight * aux_loss项
+  + 移除多任务学习：删掉self.aux_loss_weight * aux_loss项、
 
 
 ------

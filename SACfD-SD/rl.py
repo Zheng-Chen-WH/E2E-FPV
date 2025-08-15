@@ -55,7 +55,7 @@ class SAC(object):
         nn.init.constant_(self.policy.log_std_layer.weight, 0)
         nn.init.constant_(self.policy.log_std_layer.bias, 0)
         nn.init.uniform_(self.policy.mu_layer.weight, -1.0, 1.0) 
-        self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01) # Gemini说transformer适合用
+        self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01)
         self.hidden_state = None
         self.avg_td_error = None
         self.avg_disagreement = None
@@ -105,6 +105,10 @@ class SAC(object):
         self._window_disagreements = []
         self._is_initial_baseline_set = False # 标记是否已完成第一次基线设置
         self.avg_il_loss = None
+
+        # 重置优化器
+        self.critic_optim = Adam(self.critic.parameters(), self.base_lr)
+        self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01)
 
     def six_d_to_rot_mat(self, pred_6d):
         """
@@ -223,17 +227,17 @@ class SAC(object):
             [t.float().to(device) for t in [policy_pi_img_batch, policy_goal_batch, policy_q_state_batch, il_action_batch, policy_res_pos_batch, policy_res_att_batch, policy_gru_vel_batch, policy_gru_ang_batch]]
 
         # LR热启动
-        # if updates < self.warm_up_steps:
-        #     # 计算当前步的学习率：从0线性增长到 base_lr
-        #     current_lr = (updates / self.warm_up_steps) * self.base_lr
+        if updates < self.warm_up_steps:
+            # 计算当前步的学习率：从0线性增长到 base_lr
+            current_lr = (updates / self.warm_up_steps) * self.base_lr
             
-        #     # 应用到 Critic 优化器
-        #     for param_group in self.critic_optim.param_groups:
-        #         param_group['lr'] = current_lr
+            # 应用到 Critic 优化器
+            for param_group in self.critic_optim.param_groups:
+                param_group['lr'] = current_lr
             
-        #     # 应用到 Policy 优化器
-        #     for param_group in self.policy_optim.param_groups:
-        #         param_group['lr'] = current_lr
+            # 应用到 Policy 优化器
+            for param_group in self.policy_optim.param_groups:
+                param_group['lr'] = current_lr
 
         # Critic 网络更新 (逻辑不变, 使用准备好的rl批次)
         with torch.no_grad():
@@ -474,3 +478,302 @@ class PPO:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
                 self.optimizer.step()
+
+class PPO(object):
+    def __init__(self, args):
+        # PPO核心超参数 (参考Stable Baselines 3)
+        self.n_steps = args['PPO']['n_steps']  # 每个更新周期收集的步数
+        self.batch_size = args['batch_size']
+        self.n_epochs = args['n_epochs']
+        self.gamma = args['gamma']
+        self.gae_lambda = args['PPO']['lambda']
+        self.clip_range = args['PPO']['clip_range']
+        self.clip_range_vf = args['PPO']['clip_range_vf'] 
+        self.ent_coef = args['alpha']
+        self.vf_coef = args['PPO']['vf_coef']
+        self.max_grad_norm = args['PPO']['max_grad_norm']
+
+        # 自定义和IL相关参数
+        self.base_lr = args['lr']
+        self.aux_loss_weight = args['aux_loss_weight']
+        self.dagger_weight = args['dagger_loss_weight']
+        self.pos_loss_weight = args['pos_loss_weight']
+        self.rot_loss_weight = args['rot_loss_weight']
+        self.vel_loss_weight = args['vel_loss_weight']
+        self.ang_vel_loss_weight = args['ang_vel_loss_weight']
+        
+        # 带棘轮效应的动态基线参数
+        self.baseline_update_window = args['baseline_update_window']
+        self.baseline_update_gamma = args['baseline_update_gamma']
+        self.k_final = args['k_final']
+        self.k_rl_threshold = args['k_rl_threshold']
+        self.baseline_vf = 1.0
+        self.target_baseline_vf = 1.0
+        self.delta_baseline_vf = 0.0
+        self.avg_vf_loss = None
+        self.initial_vf = 1.0
+        self._window_vf_losses = []
+        self._is_initial_baseline_set = False
+
+        self.device = torch.device("cuda" if args['cuda'] else "cpu")
+
+        # 模型和优化器
+        self.policy = ActorCriticPPO(
+            embedding_dim=args['embedding_dim'],
+            num_inputs=args['Pi_mlp_dim'], # 常规状态维度
+            privileged_dim=args['PPO']['V_network_dim'], # 物理真值维度
+            num_actions=args['action_dim'],
+            hidden_sizes=args['hidden_sizes'],
+            activation=args['activation'],
+            resnet_aux_outputs=args['resnet_aux_dim'],
+            gru_aux_outputs=args['gru_aux_dim'],
+            gru_layers=args['gru_layer'],
+            dropout=args['drop_out']
+        ).to(self.device)
+        self.policy.apply(init_weights)
+        nn.init.constant_(self.policy.log_std_layer.weight, 0)
+        nn.init.constant_(self.policy.log_std_layer.bias, 0)
+        nn.init.uniform_(self.policy.mu_layer.weight, -1.0, 1.0)
+        nn.init.uniform_(self.policy.critic[-2].weight, -1e-3, 1e-3)
+        
+        # PPO通常对整个Actor-Critic网络使用一个优化器
+        self.optimizer = AdamW(self.policy.parameters(), lr=self.base_lr, weight_decay=0.01)
+        # self.optimizer = Adam(self.policy.parameters(), lr=self.base_lr, eps=1e-5)
+
+        self.hidden_state = None
+
+    def reset(self):
+        self.hidden_state = None
+
+    def six_d_to_rot_mat(self, pred_6d):
+        """
+        将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
+        这个函数不知道也不关心 N 是 B 还是 B*T，它只是独立处理N个样本。
+        """
+        a1 = pred_6d[..., 0:3]
+        a2 = pred_6d[..., 3:6]
+        b1 = F.normalize(a1, dim=-1)
+        dot_product = torch.sum(b1 * a2, dim=-1, keepdim=True)
+        a2_orthogonal = a2 - dot_product * b1
+        b2 = F.normalize(a2_orthogonal, dim=-1)
+        b3 = torch.cross(b1, b2, dim=-1)
+        return torch.stack([b1, b2, b3], dim=-1)
+    
+    def aux_loss(self, resnet_output, gru_output, gt_pos, gt_rot_mat, gt_vel, gt_ang_vel): 
+        """
+        从DAgger取数据计算模仿学习loss
+        """
+        pred_pos = resnet_output[..., 0:3] 
+        pred_rot_6d = resnet_output[..., 3:9] 
+
+        pred_vel = gru_output[..., 0:3] 
+        pred_ang_vel = gru_output[..., 3:6] 
+
+        loss_pos = F.mse_loss(pred_pos, gt_pos)
+        loss_vel = F.mse_loss(pred_vel, gt_vel)
+        loss_ang_vel = F.mse_loss(pred_ang_vel, gt_ang_vel)
+
+        pred_rot_6d_flat = pred_rot_6d.reshape(-1, 6)
+        gt_rot_mat_flat = gt_rot_mat.reshape(-1, 3, 3)
+        R_pred_flat = self.six_d_to_rot_mat(pred_rot_6d_flat)
+        loss_rot = F.mse_loss(R_pred_flat, gt_rot_mat_flat)
+
+        total_loss = (self.pos_loss_weight * loss_pos +
+                  self.rot_loss_weight * loss_rot +
+                  self.vel_loss_weight * loss_vel +
+                  self.ang_vel_loss_weight * loss_ang_vel)
+        return total_loss
+
+    def select_action(self, img_sequence, state, privileged_state, evaluate=False):
+        """为PPO修改的动作选择，同时返回价值以存入buffer"""
+        img_sequence = img_sequence.to(self.device)
+        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+        privileged_state = torch.FloatTensor(privileged_state).to(self.device).unsqueeze(0)
+        
+        with torch.no_grad():
+            # 使用模型的sample方法获取动作, 对数概率和价值
+            action, log_prob, value, _, _, new_hidden = self.policy.sample(
+                img_sequence, state, privileged_state, self.hidden_state
+            )
+        self.hidden_state = new_hidden.detach()
+        
+        # PPO需要存储 action, log_prob, value
+        return action.cpu().numpy()[0], log_prob.cpu().numpy()[0], value.cpu().numpy()[0]
+
+    def update_parameters(self, rollout_buffer, expert_memory, dagger_memory, recent_memory, updates):
+        """
+        PPO的更新函数。
+        它使用一个rollout_buffer来存储on-policy数据，并结合off-policy数据进行训练。
+        """
+        # 1. 从您的多个经验池中采样数据 (保留您的设计)
+        # 注意: PPO通常只使用on-policy数据。这里我们混合了off-policy数据，
+        # 这是一种混合方法，需要小心处理。
+        exp_pi_img, exp_v_state, exp_action, exp_reward, exp_next_priv_state,\
+              exp_done, exp_log_prob, exp_value, exp_res_pos, exp_res_att, exp_gru_vel, exp_gru_ang = expert_memory.sample(self.batch_size)
+        
+        # 这里假设您的rollout_buffer也提供了类似的数据
+        # 为了简化，我们直接使用采样数据作为PPO的"batch"
+        # TODO: 您需要根据您的数据收集方式调整这一部分
+        
+        # ---- 数据准备 (与您的SAC代码类似，但增加了特权状态) ----
+        # 为了演示，我们仅用专家数据。您需要像SAC中那样拼接所有来源的数据。
+        pi_img_batch, state_batch, priv_state_batch, action_batch, reward_batch, \
+        next_priv_state_batch, done_batch, old_log_probs_batch, old_values_batch, \
+        res_pos_batch, res_att_batch, gru_vel_batch, gru_ang_batch = \
+            [torch.from_numpy(t).float().to(self.device) for t in [exp_pi_img, exp_state, exp_priv_state, exp_action, exp_reward, exp_next_priv_state, exp_done, exp_log_prob, exp_value, exp_res_pos, exp_res_att, exp_gru_vel, exp_gru_ang]]
+        
+        # 2. 计算优势 (GAE) 和 价值目标 (Returns)
+        with torch.no_grad():
+            # 获取下一个状态的价值 V(s_t+1)
+            # 注意: Actor不使用特权状态，所以可以传入一个零张量
+            _, _, next_values, _, _, _ = self.policy.forward(
+                pi_img_batch, state_batch, next_priv_state_batch 
+            )
+            next_values = next_values.flatten()
+            
+            # GAE 计算
+            advantages = torch.zeros_like(reward_batch)
+            last_gae_lam = 0
+            # 这里我们假设数据是按时间顺序排列的，如果不是，则GAE效果会打折扣
+            # 对于随机采样的batch，实际上是1-step TD advantage
+            for t in reversed(range(len(reward_batch))):
+                if t == len(reward_batch) - 1:
+                    next_non_terminal = 1.0 - done_batch[t]
+                    next_value = next_values[t]
+                else:
+                    next_non_terminal = 1.0 - done_batch[t]
+                    next_value = old_values_batch[t+1]
+                
+                delta = reward_batch[t] + self.gamma * next_value * next_non_terminal - old_values_batch[t]
+                advantages[t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+            
+            returns = advantages + old_values_batch
+
+        # 优势标准化
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # 3. PPO 优化循环
+        for epoch in range(self.n_epochs):
+            # 使用模型的 `evaluate_actions` 方法获取新值
+            values, log_prob, entropy = self.policy.evaluate_actions(
+                pi_img_batch, state_batch, action_batch, priv_state_batch
+            )
+            values = values.flatten()
+
+            # --- 计算PPO损失 ---
+            # 策略损失 (Policy Loss / PG Loss)
+            ratio = torch.exp(log_prob - old_log_probs_batch)
+            surr1 = advantages * ratio
+            surr2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            pg_loss = -torch.min(surr1, surr2).mean()
+
+            # 价值损失 (Value Loss)
+            if self.clip_range_vf is not None:
+                values_clipped = old_values_batch + torch.clamp(
+                    values - old_values_batch, -self.clip_range_vf, self.clip_range_vf
+                )
+                vf_loss1 = F.mse_loss(values, returns)
+                vf_loss2 = F.mse_loss(values_clipped, returns)
+                vf_loss = torch.max(vf_loss1, vf_loss2)
+            else:
+                vf_loss = F.mse_loss(values, returns)
+
+            # 熵损失 (Entropy Loss)
+            entropy_loss = -torch.mean(entropy)
+            
+            # --- 计算您的自定义损失 ---
+            # IL 损失 (Imitation Loss)
+            # 您需要确定哪些数据用于IL。这里假设是整个batch
+            pi, _, _, resnet_output, gru_output, _ = self.policy.sample(
+                pi_img_batch, state_batch, priv_state_batch
+            )
+            il_loss = physics_MSE(pi, action_batch) # 使用您的物理MSE
+
+            # 辅助损失 (Auxiliary Loss)
+            aux_loss = self.aux_loss(
+                resnet_output, gru_output, res_pos_batch, res_att_batch, gru_vel_batch, gru_ang_batch
+            )
+
+            # --- 自适应权重计算 (改造版本) ---
+            with torch.no_grad():
+                current_vf_loss = vf_loss.item()
+                self._window_vf_losses.append(current_vf_loss)
+
+                # 更新基线
+                if updates % self.baseline_update_window == 0:
+                    candidate_vf = np.mean(self._window_vf_losses) + 1e-8
+                    if not self._is_initial_baseline_set:
+                        self.baseline_vf = candidate_vf
+                        self.initial_vf = candidate_vf
+                        self.target_baseline_vf = candidate_vf
+                        self._is_initial_baseline_set = True
+                        print(f"--- Initial VF baseline set: {self.baseline_vf:.4f} ---")
+                    else:
+                        if candidate_vf > self.baseline_vf or candidate_vf < self.baseline_update_gamma * self.baseline_vf:
+                           self.target_baseline_vf = max(candidate_vf, self.initial_vf * self.k_rl_threshold)
+                           self.delta_baseline_vf = (self.baseline_vf - self.target_baseline_vf) / self.baseline_update_window
+                    self._window_vf_losses = []
+
+                self.baseline_vf -= self.delta_baseline_vf
+
+                # 计算权重
+                if not self._is_initial_baseline_set:
+                    w_rl = torch.tensor(0.0, device=self.device)
+                else:
+                    # 使用价值损失的归一化值作为指标 (替代了td_error和disagreement的组合)
+                    norm_vf = min(current_vf_loss / self.baseline_vf, 2.0)
+                    w_rl = torch.exp(torch.tensor(-self.k_final * norm_vf, device=self.device))
+                w_il = 1 - w_rl
+
+            # --- 总损失 ---
+            # PPO RL损失 = 策略损失 + 熵奖励
+            rl_loss = pg_loss + self.ent_coef * entropy_loss
+            
+            # 总损失 = (加权RL损失) + (加权IL损失) + (价值函数损失) + (辅助损失)
+            total_loss = (w_rl * rl_loss + 
+                          w_il * il_loss * self.dagger_weight + 
+                          self.vf_coef * vf_loss + 
+                          self.aux_loss_weight * aux_loss)
+
+            # --- 优化步骤 ---
+            self.optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            self.optimizer.step()
+        
+        # --- 打印和返回日志 ---
+        print(f"Update: {updates}, VF Loss: {vf_loss.item():.4f}, Norm VF: {norm_vf:.4f}, RL Weight: {w_rl.item():.4f}")
+        print(f"Losses -> Total: {total_loss.item():.4f}, PG: {pg_loss.item():.4f}, IL: {il_loss.item():.4f}, Aux: {aux_loss.item():.4f}")
+        
+        return total_loss.item(), pg_loss.item(), il_loss.item(), vf_loss.item()
+    
+    # Save model parameters
+    def save_model(self, filename="master"):
+        '''if not os.path.exists('GoodModel/'):
+            os.makedirs('GoodModel/')'''
+
+        ckpt_path = filename + "_model.pt"
+        print('Saving models to {}'.format(ckpt_path))
+        torch.save({'policy_state_dict': self.policy.state_dict(),
+                    'critic_state_dict': self.critic.state_dict(),
+                    'critic_target_state_dict': self.critic_target.state_dict(),
+                    'critic_optimizer_state_dict': self.critic_optim.state_dict(),
+                    'policy_optimizer_state_dict': self.policy_optim.state_dict()}, ckpt_path)
+
+    # Load model parameters
+    def load_model(self, file_name, evaluate=False):
+        if file_name is not None:
+            checkpoint = torch.load(file_name + "_model.pt", weights_only=False)
+            self.policy.load_state_dict(checkpoint['policy_state_dict'])
+            self.critic.load_state_dict(checkpoint['critic_state_dict'])
+            self.critic_target.load_state_dict(checkpoint['critic_target_state_dict'])
+            self.critic_optim.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+            self.policy_optim.load_state_dict(checkpoint['policy_optimizer_state_dict'])
+            if evaluate:
+                self.policy.eval()
+                self.critic.eval()
+                self.critic_target.eval()
+            else:
+                self.policy.train()
+                self.critic.train()
+                self.critic_target.train()

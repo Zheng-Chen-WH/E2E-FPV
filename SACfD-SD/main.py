@@ -29,7 +29,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'batch_size':cfg.BATCH_SIZE, # batch size (default: 256)
     'max_steps':cfg.MAX_STEP_PER_EPISODE, # 每个episode最大步数
     'hidden_sizes':cfg.NN_HIDDEN_SIZE, # 隐藏层大小，带有激活函数的隐藏层层数等于这一列表大小
-    'updates_per_episode':cfg.NN_TRAIN_EPOCHS_PER_STEP, # model updates per simulator step (default: 1) 每步对参数更新的次数
+    'n_epochs':cfg.NN_TRAIN_EPOCHS_PER_STEP, # 每步对参数更新的次数; PPO是每个数据批次上优化的轮数
     'start_episodes':cfg.MIN_EPISODES_FOR_TRAINING, # 在开始训练之前进行动作以收集数据
     'target_update_interval':cfg.TARGET_UPDATE_INTERVAL, # 目标网络更新的间隔
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
@@ -60,8 +60,15 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'baseline_update_window': cfg.BASELINE_UPDATE, # 计算rl与il混合权重时的update次数间隔
     'baseline_update_gamma': cfg.UPDATE_THRESHOLD,  # 基线更新的阈值因子,新的参考值小于gamma*参考值时才更新
     'k_final': cfg.K_FINAL, # 控制从Q网络表现到强化学习权重的映射函数，值越小对rl权重越大
-    'k_rl_threshold': cfg.K_RL_THRESHOLD # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
-    }
+    'k_rl_threshold': cfg.K_RL_THRESHOLD, # 控制td和dis两个参数相比初期的最大值，避免rl训练平稳期比重反而下降的问题
+    'PPO':{'n_steps':cfg.PPO['n_steps'], # 每个更新周期收集的步数
+           'lambda':cfg.PPO['lambda'], # GAE参数
+           'clip_range': cfg.PPO['clip_range'], # PPO策略裁剪范围
+           'clip_range_vf': cfg.PPO['clip_range_vf'], # PPO价值函数裁剪范围
+           'vf_coef': cfg.PPO['vf_coef'], # 价值函数损失系数
+           'max_grad_norm':cfg.PPO['max_grad_norm'], # 梯度裁剪范数
+           'V_network_dim':cfg.PPO['V_network_dim'], # V网络输入维度
+           }} 
 
 cem_hyperparams = {
     'prediction_horizon': cfg.PREDICTION_HORIZON,
@@ -138,7 +145,7 @@ if args['task']=='Train':
         writer = SummaryWriter('./runs/')
     # Training Loop
     updates = 0
-    best_avg_reward = -900
+    best_avg_reward = -100
     total_numsteps = 0
     steps_list = []
     episode_reward_list = []
@@ -243,7 +250,7 @@ if args['task']=='Train':
                         relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
                     if len(expert_memory) > args['batch_size'] and len(exploration_memory) > args['batch_size']:
                         # Number of updates per step in environment 每次交互之后可以进行多次训练
-                        for i in range(args['updates_per_episode']):
+                        for i in range(args['n_epochs']):
                             # Update parameters of all the networks
                             policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)
                             # if policy_loss < min_loss:
@@ -317,8 +324,9 @@ if args['task']=='Train':
             avg_step /= episodes
             if args['logs']==True:
                 writer.add_scalar('avg_reward/test', avg_reward, i_episode)
-            if avg_reward >= best_avg_reward:
+            if avg_reward >= best_avg_reward and avg_reward >= 0.0:
                 best_avg_reward = avg_reward
+                agent.save_model("best_master")
             model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
             agent.save_model(model_name)
             k += 1
@@ -333,6 +341,8 @@ if args['task']=='Train':
             recent_memory.clear()
             agent.training_reset()
             updates = 0
+            if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 100) == 0): # 大于100轮之后，每20个模型重新加载一次
+                agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集
