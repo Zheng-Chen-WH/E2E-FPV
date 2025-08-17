@@ -175,7 +175,7 @@ STATIC_Q_TERMINAL_COST_NP = np.diag([
 STATIC_Q_TERMINAL_COST_MATRIX_GPU = torch.tensor(STATIC_Q_TERMINAL_COST_NP, dtype=torch.float32, device=device)
 
 # AirSim参数
-door_frames_names = ["men_Blueprint", "men2_Blueprint"]
+door_frames_names = ["men_Blueprint", "men_Blueprint2"]
 door_param= { # 门的正弦运动参数
             "num": len(door_frames_names),
             "amplitude": 2,  # 运动幅度（米）

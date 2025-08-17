@@ -309,7 +309,8 @@ class SAC(object):
                 norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
                 norm_dis = min(disagreement / self.baseline_dis, 2.0)
                 
-                hybrid_metric = norm_td  * norm_dis
+                # hybrid_metric = norm_td  * norm_dis
+                hybrid_metric = max(norm_td, norm_dis)
                 w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
 
             w_il = 1 - w_rl

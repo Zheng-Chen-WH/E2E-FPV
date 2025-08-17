@@ -178,15 +178,15 @@ class RolloutBuffer:
         """
         向Buffer中添加一个时间步的数据。
 
-        :param pi_img: 策略网络使用的图像序列 (Actor input)
-        :param state: 策略网络使用的常规状态向量 (Actor input)
-        :param privileged_state: 价值网络使用的物理真值向量 (Critic input)
-        :param action: 执行的动作
-        :param reward: 收到的奖励
-        :param done: 结束标志
-        :param value: Critic对当前状态的价值估计 V(s)
-        :param log_prob: Actor执行该动作的对数概率
-        :param gt_...: 辅助任务的真值
+        pi_img: 策略网络使用的图像序列 (Actor input)
+        state: 策略网络使用的常规状态向量 (Actor input)（目标）
+        privileged_state: 价值网络使用的物理真值向量 (Critic input)
+        action: 执行的动作
+        reward: 收到的奖励
+        done: 结束标志
+        value: Critic对当前状态的价值估计 V(s)
+        log_prob: Actor执行该动作的对数概率
+        gt_...: 辅助任务的真值
         """
         # 将数据存入预分配的numpy数组
         self.pi_imgs[self.pos] = pi_img
