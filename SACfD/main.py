@@ -317,14 +317,18 @@ if args['task']=='Train':
             avg_step /= episodes
             if args['logs']==True:
                 writer.add_scalar('avg_reward/test', avg_reward, i_episode)
-            if avg_reward >= best_avg_reward:
+            if avg_reward >= best_avg_reward and avg_reward >= 0.0:
                 best_avg_reward = avg_reward
+                agent.save_model("best_master")
             model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
             agent.save_model(model_name)
             k += 1
             print("----------------------------------------")
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
+
+        if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 100) == 0): # 大于100轮之后，每20个模型重新加载一次
+            agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集
