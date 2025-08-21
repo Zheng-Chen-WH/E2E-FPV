@@ -143,10 +143,10 @@ if args['task']=='Train':
     steps_list = []
     episode_reward_list = []
     avg_reward_list = []
-    k = 283
+    k = 0
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_282_-0.85_10.9239_27.4", evaluate=False)
+        agent.load_model("best_1", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
