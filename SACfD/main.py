@@ -317,14 +317,18 @@ if args['task']=='Train':
             avg_step /= episodes
             if args['logs']==True:
                 writer.add_scalar('avg_reward/test', avg_reward, i_episode)
-            if avg_reward >= best_avg_reward:
+            if avg_reward >= best_avg_reward and avg_reward >= 0.0:
                 best_avg_reward = avg_reward
+                agent.save_model("best_master")
             model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
             agent.save_model(model_name)
             k += 1
             print("----------------------------------------")
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
+
+        if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0): # 大于100轮之后，每20个模型重新加载一次
+            agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
         # if len(memory) == args['replay_size']: # 生成数据集
@@ -336,9 +340,14 @@ if args['task']=='Train':
             break
 
 if args['task']=='Test':
-    agent.load_model('master_278_103.76_15.1242_47.4')
+    name='master_278_103.76_15.1242_47.4_model'
+    # Model:master_504_27.73_27.8197_39.4_model, Test Episodes: 20, Avg. Reward: 32.6691,done num:6
+    # Model:master_515_24.58_9.4675_35.6_model, Test Episodes: 20, Avg. Reward: 21.4297,done num:5
+    # Model:master_706_30.91_8.0338_42.6_model, Test Episodes: 20, Avg. Reward: 37.2479,done num:5
+    # Model:master_700_45.93_28.1041_46.8_model, Test Episodes: 20, Avg. Reward: 44.8426,done num:3
+    agent.load_model(name.replace('_model', ''))
     time_start = time.time()
-    episodes = 10
+    episodes = 100
     done_num = 0
     avg_reward = 0
     for iii in range(episodes):
@@ -373,10 +382,10 @@ if args['task']=='Test':
                 #     agent.save_model(model_name)
                 #     k += 1
                 break
-        print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
+        # print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
     avg_reward = avg_reward / episodes
     #writer.add_scalar('avg_reward/test', avg_reward, i_episode)
     time_end=time.time()
     print("----------------------------------------")
-    print("Test Episodes: {}, Avg. Reward: {},done num:{}".format(episodes, round(avg_reward, 4),done_num))
+    print(f"Model:{name}, Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 4)},done num:{done_num}")
     print("----------------------------------------")
