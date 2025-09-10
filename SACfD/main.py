@@ -36,7 +36,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
     'LOAD PARA': True, #是否读取参数
-    'task':'Train', # 测试或训练或画图，Train,Test,Plot
+    'task':'Test', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
     'plot_title':'reward-steps.svg',
@@ -340,14 +340,11 @@ if args['task']=='Train':
             break
 
 if args['task']=='Test':
-    name='master_278_103.76_15.1242_47.4_model'
-    # Model:master_504_27.73_27.8197_39.4_model, Test Episodes: 20, Avg. Reward: 32.6691,done num:6
-    # Model:master_515_24.58_9.4675_35.6_model, Test Episodes: 20, Avg. Reward: 21.4297,done num:5
-    # Model:master_706_30.91_8.0338_42.6_model, Test Episodes: 20, Avg. Reward: 37.2479,done num:5
-    # Model:master_700_45.93_28.1041_46.8_model, Test Episodes: 20, Avg. Reward: 44.8426,done num:3
+    name='master_47_42.82_22.4344_45.8_model'
+    # 
     agent.load_model(name.replace('_model', ''))
     time_start = time.time()
-    episodes = 100
+    episodes = 20
     done_num = 0
     avg_reward = 0
     for iii in range(episodes):
