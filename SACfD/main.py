@@ -340,11 +340,11 @@ if args['task']=='Train':
             break
 
 if args['task']=='Test':
-    name='master_47_42.82_22.4344_45.8_model'
+    name='best_1_model'
     # 
     agent.load_model(name.replace('_model', ''))
     time_start = time.time()
-    episodes = 20
+    episodes = 50
     done_num = 0
     avg_reward = 0
     for iii in range(episodes):
