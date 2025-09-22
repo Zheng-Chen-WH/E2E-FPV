@@ -3,6 +3,7 @@ import torch
 import os
 from torchvision import transforms
 from PIL import Image
+from pathlib import Path
 
 def create_log_gaussian(mean, log_std, t):
     quadratic = -((0.5 * (t - mean) / (log_std.exp())).pow(2))
@@ -142,4 +143,75 @@ def physics_MSE(y_pred, y_true, weighted = False):
     # print(f"tau_x:{F.mse_loss(tau_x_pred, tau_x_true)}, tau_y:{F.mse_loss(tau_y_pred, tau_y_true)} ,tau_z:{F.mse_loss(tau_z_pred, tau_z_true)}")
     return final_loss
 
+def find_latest_untested_model(model_dir: str, tested_log_file: str) -> str | None:
+    """
+    遍历模型目录txt，找到最新的、尚未被测试过的模型文件。
+
+    Args:
+        model_dir (str): 存放 .pt 模型文件的目录路径。
+        tested_log_file (str): 记录已测试模型文件名的日志文件路径。
+
+    Returns:
+        str | None: 如果找到，则返回最新未测试模型的完整路径；
+                    否则返回 None。
+    """
+    model_directory = Path(model_dir)
+    log_file = Path(tested_log_file)
+
+    # 获取所有已经测试过的模型文件名集合，提高查找效率
+    try:
+        with open(log_file, 'r') as f:
+            # 使用set存储
+            tested_models = set(line.strip() for line in f)
+        print(f"已加载 {len(tested_models)} 个已测试模型的记录。")
+    except FileNotFoundError:
+        # 如果日志文件不存在，说明还没有任何模型被测试过
+        tested_models = set()
+        print("未找到已测试模型日志，将视所有模型为未测试。")
+
+    # 2. 获取目录下所有的 .pt 模型文件
+    all_model_paths = list(model_directory.glob("*.pt"))
+    if not all_model_paths:
+        print(f"警告: 在目录 '{model_dir}' 中没有找到任何 .pt 文件。")
+        return None
+    
+    # 3. 筛选出所有未被测试过的模型
+    untested_model_paths = [
+        path for path in all_model_paths if path.name not in tested_models
+    ]
+
+    if not untested_model_paths:
+        print("所有模型均已测试完毕。")
+        return None
+
+    # 4. 对未测试的模型列表，根据文件创建时间（或修改时间）进行排序，找到最新的
+    #    os.path.getctime: 在Windows上是创建时间，在Unix上是元数据最后修改时间
+    #    os.path.getmtime: 文件的最后修改时间。通常更可靠。
+    #    我们使用 getmtime 以获得更一致的行为。
+    try:
+        latest_untested_model = max(untested_model_paths, key=os.path.getmtime)
+    except Exception as e:
+        print(f"在获取文件时间戳时发生错误: {e}")
+        return None
+        
+    print(f"找到最新的未测试模型: {latest_untested_model.name}")
+    return str(latest_untested_model)
+
+def mark_model_as_tested(model_path: str, tested_log_file: str):
+    """
+    将一个模型文件名记录到已测试日志中。
+
+    Args:
+        model_path (str): 被测试的模型文件的完整路径。
+        tested_log_file (str): 记录已测试模型文件名的日志文件路径。
+    """
+    log_file = Path(tested_log_file)
+    model_name = Path(model_path).name
+    try:
+        # 使用追加模式 'a'
+        with open(log_file, 'a') as f:
+            f.write(model_name + '\n')
+        print(f"已将模型 '{model_name}' 标记为已测试。")
+    except Exception as e:
+        print(f"错误：无法将模型标记为已测试。 {e}")
     

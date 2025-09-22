@@ -12,11 +12,33 @@
 pip install msgpack-rpc-python
 pip install airsim
 ```
-3. 把我的台式机下D:\AirSim\Unreal\Environments\MPC复制到目标电脑的AirSim文件夹同位置
-4. UE4启动上述位置下的MPC.uproject文件，启动关卡
-5. 复制我的台式机的桌面\E2E FPV文件夹到目标电脑上，在IDE上运行
-6. UE4编辑界面点击“播放”，出现无人机画面后可以按M键切换到固定机位
-7. 运行代码文件夹下main.py
+3. 在C:\Users\用户名\文档\AirSim文件夹下创建settings.json，如果有的话就直接修改内容为：
+```
+{
+  "OriginGeopoint": {
+        "Latitude": 40.0475,
+        "Longitude": 116.1745,
+        "Altitude": 50.0
+    },
+  "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/main/docs/settings.md",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "Vehicles": {
+    "Drone1": {
+      "VehicleType": "SimpleFlight",
+      "X": 0,
+      "Y": 0,
+      "Z": 0 ,
+      "Yaw": 90
+    }
+  }
+}
+```
+4. 把我的台式机下D:\AirSim\Unreal\Environments\MPC复制到目标电脑的AirSim文件夹同位置
+5. UE4启动上述位置下的MPC.uproject文件，启动关卡
+6. 复制我的台式机的桌面\E2E FPV文件夹到目标电脑上，在IDE上运行
+7. UE4编辑界面点击“播放”，出现无人机画面后可以按M键切换到固定机位
+8. 运行代码文件夹下main.py
 
 ### 跑实验
 1. main.py #39行：'Train'为训练，'Test'为推理
