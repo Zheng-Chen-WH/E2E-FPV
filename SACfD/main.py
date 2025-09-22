@@ -342,7 +342,7 @@ if args['task']=='Train':
             break
 
 if args['task']=='Test':
-    name='master_741_90.58_15.2515_42.4_model'
+    name='best_2_model'
     # Model:master_92_42.04_18.1015_36.4_model, Test Episodes: 20, Avg. Reward: 54.7724,done num:8
     # Model:master_741_90.58_15.2515_42.4_model, Test Episodes: 10, Avg. Reward: 31.7245,done num:3
     # Model:master_1384_66.03_18.9195_41.6_model, Test Episodes: 10, Avg. Reward: 25.5,done num:3
