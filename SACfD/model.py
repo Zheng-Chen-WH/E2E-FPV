@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
+from utils import six_d_to_rot_mat
 
 LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
@@ -318,6 +319,13 @@ class GaussianPolicy(nn.Module):
         #log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + epsilon) #原论文中公式，但是多了个action_scale
         log_prob = log_prob.sum(1, keepdim=True)
         mean = torch.tanh(mean) * self.action_scale + self.action_bias
+        print(f"pred distance:", resnet_output[..., 0:3])
+        pred_rot_6d_flat = resnet_output[..., 3:9].reshape(-1, 6)
+        R_pred_flat = six_d_to_rot_mat(pred_rot_6d_flat)
+        print(f"pred attitude:", R_pred_flat)
+        print(f"pred velocity:", gru_output[..., 0:3])
+        print(f"pred angular:", gru_output[..., 3:6])
+        print("-------------------------------------------------------")
         return action, log_prob, mean, resnet_output, gru_output, new_hidden_state # 辅助头输出分别是（B,T,9）和（B,T,6）
 
     def to(self, device):
