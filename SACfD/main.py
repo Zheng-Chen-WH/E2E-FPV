@@ -20,7 +20,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'gru_layer': cfg.GRU_LAYER, # GRU层数
     'drop_out': cfg.DROP_OUT, # GRU的dropout概率
     'gamma':0.99, # discount factor for reward (default: 0.99)
-    'tau':0.2, # target smoothing coefficient(τ) (default: 0.005) 参数tau定义了目标网络软更新时的平滑系数，
+    'tau':0.01, # target smoothing coefficient(τ) (default: 0.005) 参数tau定义了目标网络软更新时的平滑系数，
                     # 它控制了新目标值在更新目标网络时与旧目标值的融合程度。
                     # 较小的tau值会导致目标网络变化较慢，从而增加了训练的稳定性，但也可能降低学习速度。
     'lr':cfg.LEARNING_RATE, # learning rate (default: 0.0003)
@@ -362,10 +362,10 @@ if args['task']=='Test':
                              relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
         agent.reset()
         while True:
-            print(f"true distance:", relative_next_target_pos)
-            print(f"true attitude:", attitude_9d)
-            print(f"true velocity:", relative_next_target_vel)
-            print(f"true angular:", fpv_angular_vel)
+            # print(f"true distance:", relative_next_target_pos)
+            # print(f"true attitude:", attitude_9d)
+            # print(f"true velocity:", relative_next_target_vel)
+            # print(f"true angular:", fpv_angular_vel)
             NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
             rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
             next_drone_state, next_img_tensor, next_Q_state,\
