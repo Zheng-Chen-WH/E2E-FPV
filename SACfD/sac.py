@@ -316,7 +316,7 @@ class SAC(object):
             w_il = 1 - w_rl
 
         # 计算最终加权总损失
-        total_policy_loss = w_rl * rl_policy_loss_component + w_il * il_policy_loss_component * self.dagger_weight # + self.aux_loss_weight * aux_loss
+        total_policy_loss = w_rl * rl_policy_loss_component + w_il * il_policy_loss_component * self.dagger_weight  + self.aux_loss_weight * aux_loss
         
         self.policy_optim.zero_grad()
         total_policy_loss.backward()

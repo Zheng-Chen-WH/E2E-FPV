@@ -414,7 +414,7 @@ class env:
             self.done=True
             self.info=0
             self.i+=1
-        elif np.linalg.norm(Q_state[24:27]) < self.target_distance:
+        elif 10 * np.linalg.norm(Q_state[24:27]) < self.target_distance:
             R_event += 300
             self.done = True
             self.info = 1
