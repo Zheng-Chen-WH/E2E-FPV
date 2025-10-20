@@ -166,11 +166,11 @@ class SimpleFlightDynamicsTorch:
         velocity_b = pt_quat_rotate_vector(q_bw_inv, vel_w) # 速度转到本体系
         force_drag_b = -self.drag_box_body.unsqueeze(0) * torch.abs(velocity_b) * velocity_b
 
-        # 4. 总力和总扭矩
+        # 总力和总扭矩
         total_force_b = total_thrust_vector_b + force_drag_b
         total_torque_b = torques_actuators_b + torque_drag_b
 
-        # 5. 动力学方程求解 (与之前版本类似)
+        # 动力学方程求解 (与之前版本类似)
         total_force_w = pt_quat_rotate_vector(q_bw_wxyz, total_force_b) # 合力转移到世界系
         linear_accel_w = total_force_w / self.mass + self.gravity_w.unsqueeze(0) # 计算加速度
 
@@ -196,7 +196,6 @@ class SimpleFlightDynamicsTorch:
         next_states = torch.cat((next_pos_w, next_vel_w, next_q_bw_wxyz, next_ang_vel_b), dim=1)
         return next_states, next_motor_filtered_outputs
 
-    # --- 公共方法 ---
     def simulate_horizon(self, batch_initial_states, 
                          motor_pwms_horizon, DT,
                          initial_motor_filter_outputs=None):

@@ -3,7 +3,8 @@ import torch
 import time
 import math
 import config as cfg
-from analytical_model_gpu import SimpleFlightDynamicsTorch
+from analytical_model_gpu import SimpleFlightDynamicsTorch, pt_quat_rotate_vector
+import torch.nn.functional as F
 
 """ 将参数从 config.py传递到 main.py，再由 main.py 传递给 mpc_core.py
     这种方式通常被称为**依赖注入（Dependency Injection）**的一种形式
@@ -58,7 +59,8 @@ class CEM_MPC():
         self.state_dim = mpc_params['state_dim'] #姿态用wxyz四元数表示
         self.device = mpc_params['device']  # 获取设备
         self.mean_control_sequence_warm_start = np.zeros((self.prediction_horizon, self.action_dim))
-        self.pos_tolerence=mpc_params['pos_tolerence']
+        self.pos_tolerence = mpc_params['pos_tolerence']
+        self.align_cost = mpc_params['align_cost']
      
         # 记录轨迹画图用
         # actual_trajectory_log = [current_true_state.copy()]
@@ -74,7 +76,7 @@ class CEM_MPC():
         current_mpc_target_state_sequence_gpu,
         q_state_cost_matrix_gpu,
         r_control_cost_matrix_gpu,
-        q_terminal_cost_matrix_gpu
+        q_terminal_cost_matrix_gpu,
         ):
         """
         在GPU上批量计算轨迹成本。
@@ -134,8 +136,53 @@ class CEM_MPC():
                                     terminal_state_error)
         # print("state:", state_costs,"\ncontrol", control_costs, "\nterminal", terminal_costs)
 
+        # 新增相机对准代价计算】
+        
+        # 提取轨迹中每个时间步的位置和姿态
+        # running_predicted_states: (K, H, 13)
+        pred_positions = running_predicted_states[:, :, 0:3]   # (K, H, 3)
+        pred_quats_wxyz = running_predicted_states[:, :, 6:10]  # (K, H, 4)
+
+        # 计算每个时间步的目标方向向量
+        # target_positions: (H, 3)
+        target_positions = current_mpc_target_state_sequence_gpu[:, 0:3] # (H, 3)
+        # target_direction_vectors: (K, H, 3)
+        target_direction_vectors = target_positions.unsqueeze(0) - pred_positions
+        # 归一化得到单位方向向量
+        target_direction_vectors = F.normalize(target_direction_vectors, p=2, dim=-1)
+
+        # 计算每个时间步无人机实际朝向
+        # 无人机机体坐标系的前向轴 [1, 0, 0]
+        body_forward_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device, dtype=torch.float32)
+        # 广播到与轨迹批次匹配的形状
+        body_forward_vec_batch = body_forward_vec.view(1, 1, 3).expand(self.n_samples_cem, prediction_horizon, -1) # (K, H, 3)
+
+        # 为了使用 pt_quat_rotate_vector，需要将 (K, H, 4) 和 (K, H, 3) 的形状拉平
+        # pred_quats_flat: (K*H, 4)
+        # body_forward_vec_flat: (K*H, 3)
+        pred_quats_flat = pred_quats_wxyz.reshape(-1, 4)
+        body_forward_vec_flat = body_forward_vec_batch.reshape(-1, 3)
+        
+        # 使用四元数旋转得到世界坐标系下的前向向量
+        world_forward_vectors_flat = pt_quat_rotate_vector(pred_quats_flat, body_forward_vec_flat)
+        # 转换回 (K, H, 3) 的形状
+        world_forward_vectors = world_forward_vectors_flat.reshape(self.n_samples_cem, prediction_horizon, 3)
+
+        # 计算对准误差 (点积的负值)，代价是 1 - 点积
+        # dot_products: (K, H)
+        dot_products = torch.sum(world_forward_vectors * target_direction_vectors, dim=-1)
+        
+        # alignment_errors: (K, H), 范围在 [0, 2] 之间
+        alignment_errors = 1.0 - dot_products
+        
+        # 将整个时域的对准误差求和，得到每个样本的总对准代价
+        # alignment_costs: (K,)
+        alignment_costs = self.align_cost * torch.sum(alignment_errors, dim=1)
+
         # 总成本
-        total_costs_batch = state_costs + control_costs + terminal_costs
+
+        total_costs_batch = state_costs + control_costs + terminal_costs + alignment_costs
+        # print(alignment_costs)
         return total_costs_batch
 
     def get_mpc_target_sequence(self, current_idx, elapsed_time):
@@ -169,7 +216,8 @@ class CEM_MPC():
                 # MPC目标：以指定速度穿过指定点
                 target_pos_x = pred_door_x
                 target_pos_y = target_door_y + self.waypoint_pass_threshold_y # 对准门的y位置+阈值
-                target_pos_z = self.door_z_positions[door_info_idx] - 1.8 # z位置在门底部，-1.5m大约在门中心
+                target_pos_z = self.door_z_positions[door_info_idx] - self.door_parameters["center"]
+                # print(f'target:{target_pos_z}')
 
                 target_vel_x = pred_door_x_vel # 匹配门的x速度
                 target_vel_y = 4.0  # 穿越门的目标速度

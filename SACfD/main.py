@@ -35,8 +35,8 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': True, #是否读取参数
-    'task':'Test', # 测试或训练或画图，Train,Test,Plot
+    'LOAD PARA': False, #是否读取参数
+    'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
     'plot_title':'reward-steps.svg',
@@ -92,7 +92,8 @@ mpc_params = {
     'action_dim':cfg.ACTION_DIM,
     'state_dim':cfg.MPC_STATE_DIM,
     'device':cfg.device,
-    'pos_tolerence':cfg.POS_TOLERANCE
+    'pos_tolerence':cfg.POS_TOLERANCE,
+    'align_cost':cfg.ALIGH_COST
 }
 
 env_params={'DT':cfg.DT,
@@ -103,7 +104,8 @@ env_params={'DT':cfg.DT,
             'frames':cfg.NUM_TRANSFORMER_FRAMES,
             'pass_threshold_y': cfg.WAYPOINT_PASS_THRESHOLD_Y,
             'control_max': cfg.CONTROL_MAX,
-            'control_min': cfg.CONTROL_MIN}
+            'control_min': cfg.CONTROL_MIN,
+            'reward_weight': cfg.REWARD_WEIGHT}
 
 # 初始化
 airsim_environment = env(env_params)

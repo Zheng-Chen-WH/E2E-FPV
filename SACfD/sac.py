@@ -59,7 +59,7 @@ class SAC(object):
         self.hidden_state = None
         self.avg_td_error = None
         self.avg_disagreement = None
-         # 带棘轮效应的动态基线参数
+        # 带棘轮效应的动态基线参数
         self.baseline_update_window = args['baseline_update_window']
         self.baseline_update_gamma = args['baseline_update_gamma']
         # 归一化分母（基线），初始化为1.0
@@ -253,70 +253,74 @@ class SAC(object):
         aux_loss = self.aux_loss(resnet_output, gru_output, policy_res_pos_batch, policy_res_att_batch, 
                                 policy_gru_vel_batch, policy_gru_ang_batch)
         
-        # 计算强化学习损失权重
-        with torch.no_grad():
-            current_td_error = qf_loss.item()
-            disagreement = torch.abs(qf1_pi - qf2_pi).mean().item()
+        '''
+        暂时不使用这一段代码混合il+rl，先用线性衰减权重，后期视效果再加上
+        '''
+        # # 计算强化学习损失权重
+        # with torch.no_grad():
+        #     current_td_error = qf_loss.item()
+        #     disagreement = torch.abs(qf1_pi - qf2_pi).mean().item()
             
-            # 步骤A: 收集当前窗口的数据
-            self._window_td_errors.append(current_td_error)
-            self._window_disagreements.append(disagreement)
+        #     # 步骤A: 收集当前窗口的数据
+        #     self._window_td_errors.append(current_td_error)
+        #     self._window_disagreements.append(disagreement)
 
-            # 到达窗口末尾时评估和更新基线
-            if updates % self.baseline_update_window == 0:
-                # 计算当前窗口的候选基线
-                candidate_td = np.mean(self._window_td_errors) + 1e-8
-                candidate_dis = np.mean(self._window_disagreements) + 1e-8
+        #     # 到达窗口末尾时评估和更新基线
+        #     if updates % self.baseline_update_window == 0:
+        #         # 计算当前窗口的候选基线
+        #         candidate_td = np.mean(self._window_td_errors) + 1e-8
+        #         candidate_dis = np.mean(self._window_disagreements) + 1e-8
 
-                if not self._is_initial_baseline_set:
-                    # 特殊情况：第一次设置基线，无条件接受
-                    self.baseline_td = candidate_td
-                    self.baseline_dis = candidate_dis
-                    self.initial_td = candidate_td # 设置最初td_error值，避免训练末期rl权重反而过小
-                    self.initial_dis = candidate_dis
-                    self._is_initial_baseline_set = True
-                    self.target_baseline_td = candidate_td # 设置目标值，实现缓慢下降而非阶跃变化
-                    self.target_baseline_dis = candidate_dis
-                    print("--- Initial baseline set ---")
-                else:
-                    # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
-                    if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
-                        self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
-                        self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
+        #         if not self._is_initial_baseline_set:
+        #             # 特殊情况：第一次设置基线，无条件接受
+        #             self.baseline_td = candidate_td
+        #             self.baseline_dis = candidate_dis
+        #             self.initial_td = candidate_td # 设置最初td_error值，避免训练末期rl权重反而过小
+        #             self.initial_dis = candidate_dis
+        #             self._is_initial_baseline_set = True
+        #             self.target_baseline_td = candidate_td # 设置目标值，实现缓慢下降而非阶跃变化
+        #             self.target_baseline_dis = candidate_dis
+        #             print("--- Initial baseline set ---")
+        #         else:
+        #             # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
+        #             if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
+        #                 self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
+        #                 self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
                     
-                    if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
-                        self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
-                        self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
+        #             if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
+        #                 self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
+        #                 self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
 
-                    print("--- Baseline re-evaluated ---")
+        #             print("--- Baseline re-evaluated ---")
 
-                # 打印当前基线值以供监控
-                print(f"  New target TD Baseline: {self.target_baseline_td:.4f} (Candidate: {candidate_td:.4f})")
-                print(f"  New target Dis. Baseline: {self.target_baseline_dis:.4f} (Candidate: {candidate_dis:.4f})")
+        #         # 打印当前基线值以供监控
+        #         print(f"  New target TD Baseline: {self.target_baseline_td:.4f} (Candidate: {candidate_td:.4f})")
+        #         print(f"  New target Dis. Baseline: {self.target_baseline_dis:.4f} (Candidate: {candidate_dis:.4f})")
 
-                # 清空窗口数据，为下一个周期做准备
-                self._window_td_errors = []
-                self._window_disagreements = []
+        #         # 清空窗口数据，为下一个周期做准备
+        #         self._window_td_errors = []
+        #         self._window_disagreements = []
         
-            self.baseline_dis = self.baseline_dis - self.delta_baseline_dis
-            self.baseline_td = self.baseline_td - self.delta_baseline_td
+        #     self.baseline_dis = self.baseline_dis - self.delta_baseline_dis
+        #     self.baseline_td = self.baseline_td - self.delta_baseline_td
             
-            # 使用当前基线进行归一化并计算权重
-            if not self._is_initial_baseline_set:
-                # 在第一个基线建立之前，倾向于模仿
-                w_rl = torch.tensor(0.0, device=self.device)
-            else:
-                norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
-                norm_dis = min(disagreement / self.baseline_dis, 2.0)
+        #     # 使用当前基线进行归一化并计算权重
+        #     if not self._is_initial_baseline_set:
+        #         # 在第一个基线建立之前，倾向于模仿
+        #         w_rl = torch.tensor(0.0, device=self.device)
+        #     else:
+        #         norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
+        #         norm_dis = min(disagreement / self.baseline_dis, 2.0)
                 
-                # hybrid_metric = norm_td  * norm_dis
-                hybrid_metric = max(norm_td, norm_dis)
-                w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
+        #         # hybrid_metric = norm_td  * norm_dis
+        #         hybrid_metric = max(norm_td, norm_dis)
+        #         w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
 
-            w_il = 1 - w_rl
+        #     w_il = 1 - w_rl
 
+        w_rl = min(1, updates/self.baseline_update_window)*self.baseline_update_gamma
         # 计算最终加权总损失
-        total_policy_loss = w_rl * rl_policy_loss_component + w_il * il_policy_loss_component * self.dagger_weight # + self.aux_loss_weight * aux_loss
+        total_policy_loss = w_rl * rl_policy_loss_component + (1 - w_rl) * il_policy_loss_component * self.dagger_weight + self.aux_loss_weight * aux_loss
         
         self.policy_optim.zero_grad()
         total_policy_loss.backward()
@@ -336,7 +340,7 @@ class SAC(object):
 
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
-        print(f"td_error:{norm_td}, norm_dis:{norm_dis}")
+        # print(f"td_error:{norm_td}, norm_dis:{norm_dis}")
         print(f"RL weight:{w_rl}, Q:{qf_loss}, RL:{rl_policy_loss_component}, IL:{il_policy_loss_component}")
         return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item()
 

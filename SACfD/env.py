@@ -32,6 +32,7 @@ class env:
         self.pass_threshold = args['pass_threshold_y']
         self.max_action = args['control_max']
         self.min_action = args['control_min']
+        self.reward_weight = args['reward_weight']
 
         # 门框正弦运动运动参数
         self.door_param =  args['door_param']
@@ -45,6 +46,10 @@ class env:
         self.i=0
         self.info=0 # 完成情况flag
         self.phase_idx = 0
+        self.last_phase_idx = 0
+
+        self.last_y_pos = 0.0
+        self.last_potential = 0
 
         # 正态分布噪声
         # self.sigma=np.degrees(0.001)
@@ -87,17 +92,91 @@ class env:
             self._move_door(door_name, np.array([new_x, self.waypoints_y[i+1], self.door_z_positions[i]]))
     
     # 航路点管理
-    def _get_current_waypoint_index(self, current_y_pos, waypoints_y_list, threshold):
-        # 航路点：[start_y, door1_y, door2_y, final_target_y]
-        # index 0: target is door1 (at waypoints_y_list[1])
-        # index 1: target is door2 (at waypoints_y_list[2])
-        # index 2: target is final_target (at waypoints_y_list[3])
-        if current_y_pos < waypoints_y_list[1] + threshold: # 靠近第一个门
-            return 0
-        elif current_y_pos < waypoints_y_list[2] + threshold: # elif确保已经越过了第一个门
-            return 1
-        else: # else确保越过了第二个门
-            return 2
+    # def _get_current_waypoint_index(self, current_y_pos, waypoints_y_list, threshold):
+    #     # 航路点：[start_y, door1_y, door2_y, final_target_y]
+    #     # index 0: target is door1 (at waypoints_y_list[1])
+    #     # index 1: target is door2 (at waypoints_y_list[2])
+    #     # index 2: target is final_target (at waypoints_y_list[3])
+    #     if current_y_pos < waypoints_y_list[1] + threshold: # 靠近第一个门
+    #         return 0
+    #     elif current_y_pos < waypoints_y_list[2] + threshold: # elif确保已经越过了第一个门
+    #         return 1
+    #     else: # else确保越过了第二个门
+    #         return 2
+    
+    def check_gate_passage(self, current_drone_state, waypoints_y, relative_target_position, door_params):
+        
+        """
+        检查无人机是否成功穿越了当前阶段的目标门，并返回新的phase_idx和事件奖励。
+        Args:
+            current_drone_state (np.array): 无人机完整状态，包含x,y,z位置。
+            waypoints_y (list): [start_y, door1_y, door2_y, final_target_y]
+            door_params (dict): 包含门的位置和尺寸信息，例如门中心的X和Z，以及门的宽度和高度。
+        Returns:
+            passage_successful, event_reward
+        """
+        current_pos = current_drone_state[0:3]
+        current_y = current_pos[1]
+        passage_successful = False
+
+        new_phase_idx = self.phase_idx
+        event_reward = 0
+        
+        # 检查是否从阶段0（目标门1）切换到阶段1
+        if self.phase_idx == 0:
+            target_door_y = waypoints_y[1]
+            
+            # 检测“穿越平面”事件：从Y值小的一侧移动到Y值大的一侧
+            if self.last_y_pos < target_door_y+ self.pass_threshold and current_y >= target_door_y+ self.pass_threshold:
+                print("穿越门1平面")
+                
+                # 在穿越瞬间，验证X和Z坐标是否在门框内
+                door_width = door_params["width"]   # 您需要在door_params中添加门的尺寸
+                door_height = door_params["height"]
+
+                # 检查X坐标
+                is_x_valid = abs(relative_target_position[0]) < (door_width / 2.0)
+                # 检查Z坐标
+                # print("z relative distance:", relative_target_position[2])
+                is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
+                
+                if is_x_valid and is_z_valid:
+                    print("成功穿越门1！")
+                    passage_successful = True
+                    # new_phase_idx = 1  # 切换到下一阶段
+                    event_reward = 5  # 给予一次性的里程碑奖励
+                else:
+                    print("从门1旁边绕过或撞门框！")
+                    # 如果没有成功穿越，可以给予一个小的负奖励，或者什么都不做
+                    event_reward = -3
+        
+        # 检查是否需要从阶段1（目标门2）切换到阶段2
+        elif self.phase_idx == 1:
+            target_door_y = waypoints_y[2]
+            
+            if self.last_y_pos < target_door_y and current_y >= target_door_y:
+                print("穿越门2平面")
+
+                door_width = door_params["width"]
+                door_height = door_params["height"]
+
+                is_x_valid = abs(relative_target_position[0]) < (door_width / 2.0)
+                # print("z relative distance:", relative_target_position[2])
+                is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
+
+                if is_x_valid and is_z_valid:
+                    print("成功穿越门2！")
+                    # new_phase_idx = 2  # 切换到最终目标阶段
+                    passage_successful = True
+                    event_reward = 5  # 再次给予奖励
+                else:
+                    print("从门2旁边绕过或撞门框！")
+                    event_reward = -3
+        
+        # 更新上一步的Y坐标，为下一次检测做准备
+        self.last_y_pos = current_y
+        
+        return passage_successful, event_reward # new_phase_idx,
     
     # 将四元数转成旋转矩阵
     def quaternions_to_rotation_matrices(self, quaternions):
@@ -131,6 +210,32 @@ class env:
         rot_mats[..., 2, 2] = 1 - 2 * (xx + yy)
         
         return rot_mats
+    
+    def quat_rotate_vector(self, q: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """
+        使用四元数 q (w, x, y, z) 旋转一个三维向量 v.
+        """
+        # 将向量 v 转换为纯四元数 (0, vx, vy, vz)
+        v_quat = np.array([0, v[0], v[1], v[2]])
+        
+        # 计算四元数共轭 q* = (w, -x, -y, -z)
+        q_conj = np.array([q[0], -q[1], -q[2], -q[3]])
+        
+        # 四元数乘法: q1 * q2
+        def quat_multiply(q1, q2):
+            w1, x1, y1, z1 = q1
+            w2, x2, y2, z2 = q2
+            w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+            x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+            y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+            z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+            return np.array([w, x, y, z])
+
+        # 旋转公式: v' = q * v * q*
+        rotated_v_quat = quat_multiply(quat_multiply(q, v_quat), q_conj)
+        
+        # 返回旋转后向量的部分
+        return rotated_v_quat[1:]
 
     def get_drone_state(self): # 给MPC的13维向量和给Q网络的25维状态向量
         # 获取无人机状态
@@ -159,24 +264,24 @@ class env:
 
         '''生成Q网络用的状态'''
         # 获取无人机相对最终目标的位置
-        relative_pos_target=np.array([position.x_val-self.final_target_state[0],
-                                     position.y_val-self.final_target_state[1],
-                                     position.z_val-self.final_target_state[2]])
+        relative_pos_target=np.array([self.final_target_state[0]-position.x_val,
+                                     self.final_target_state[1]-position.y_val,
+                                     self.final_target_state[2]-position.z_val])
 
         # 获取无人机相对两个门的位置、速度
         relative_pos_door_one=np.array([self.door_current_x_positions[0] - position.x_val,
                                       self.waypoints_y[1] - position.y_val,
-                                      - position.z_val])
+                                      self.door_param["center"] + position.z_val])
         relative_vel_door_one=np.array([self.door_x_velocities[0] - linear_velocity.x_val,
                                         - linear_velocity.y_val,
                                         - linear_velocity.z_val])
         relative_pos_door_two=np.array([self.door_current_x_positions[1] - position.x_val,
                                       self.waypoints_y[2] - position.y_val,
-                                      - position.z_val])
+                                       self.door_param["center"] + position.z_val])
         relative_vel_door_two=np.array([self.door_x_velocities[1] - linear_velocity.x_val,
                                         - linear_velocity.y_val,
                                         - linear_velocity.z_val])
-        
+        # print(position.z_val)
         # 获取无人机相对阶段目标的位置、速度
         if self.phase_idx == 0:
             relative_next_target_pos = relative_pos_door_one
@@ -191,8 +296,7 @@ class env:
         # 给辅助头的标签要/10
         return np.concatenate((fpv_pos, fpv_vel, fpv_attitude, fpv_angular_vel)), \
             np.concatenate((fpv_vel/10.0, attitude_6d, fpv_angular_vel, 
-                            relative_pos_door_one/10.0, relative_vel_door_one/10.0,  
-                            relative_pos_door_two/10.0, relative_vel_door_two/10.0, relative_pos_target/10.0)), \
+                            relative_next_target_pos/10.0, relative_next_target_vel/10.0, relative_pos_target/10.0)), \
                             relative_next_target_pos/10.0, attitude_9d, relative_next_target_vel/10.0, fpv_angular_vel
     
     def get_img_sequence(self):
@@ -341,9 +445,21 @@ class env:
         self.door_param["start_time"] = self.start_time
 
         self.phase_idx = 0
+        self.last_phase_idx = 0
+
         self.elapsed_time = time.time() - self.start_time
         img_tensor, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = self.get_img_sequence() # 获取图像编码张量
         current_drone_state, Q_state, _, _, _, _ = self.get_drone_state()
+        self.last_y_pos = current_drone_state[1]
+        dist_next_target = np.linalg.norm(Q_state[12:15])
+        vel_to_next_target = np.linalg.norm(Q_state[15:18])
+        dist_to_final_target = np.linalg.norm(Q_state[18:21])
+        self.last_potential = (
+            - self.reward_weight['W_POS_PROG'] * dist_next_target
+            - self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target
+            - self.reward_weight['W_FINAL_PULL'] * dist_to_final_target
+        )
+
         self.start_time_step = time.time()
 
         collision_info = self.client.simGetCollisionInfo()
@@ -378,8 +494,17 @@ class env:
         self.client.simPause(True)
         # self.start_time_step=time.time()
 
-        current_drone_state, Q_state, _, _, _, _ = self.get_drone_state()
-        self.phase_idx = self._get_current_waypoint_index(current_drone_state[1], self.waypoints_y, self.pass_threshold)
+        # 基于旧的phase_idx检测是否穿门，再用检测后的Phase_idx计算状态，避免出现phase_idx更新与状态更新异步进而导致势跳变
+        temp_drone_state, _, temp_relative_pos, _, _, _ = self.get_drone_state()
+        phase_switched, pass_reward = self.check_gate_passage(
+            temp_drone_state, self.waypoints_y, temp_relative_pos * 10, self.door_param
+        )
+        if phase_switched:
+            self.phase_idx += 1
+
+        current_drone_state, Q_state, relative_pos, _, _, _ = self.get_drone_state()
+        # self.phase_idx = self._get_current_waypoint_index(current_drone_state[1], self.waypoints_y, self.pass_threshold)
+        # self.phase_idx, pass_reward = self.check_gate_passage(current_drone_state, self.waypoints_y, relative_pos*10, self.door_param)
         # print(f"airsim仿真环境, {current_drone_state[0:3]},速度,{current_drone_state[3:6]},姿态四元数{current_drone_state[6:10]},角速度{current_drone_state[10:13]}")
         # print("————————————————————————————————————")
         collision_info = self.client.simGetCollisionInfo()
@@ -389,39 +514,75 @@ class env:
         if collision_info.has_collided and (collision_info.time_stamp / 1e9 > self.first_collide_time + 0.5) :
             collided = True
 
+        # Q state
+        # np.concatenate((fpv_vel/10.0, attitude_6d, fpv_angular_vel, 
+        # relative_next_target_pos/10.0, relative_next_target_vel/10.0, relative_pos_target/10.0))
+
+        # 从Q状态中提取信息
+        # 注意：这些值都是基于已经 /10 的状态向量
+        dist_next_target = np.linalg.norm(Q_state[12:15])
+        vel_to_next_target = np.linalg.norm(Q_state[15:18])
+        dist_to_final_target = np.linalg.norm(Q_state[18:21])
+
+        # 定义并计算当前步势能函数
+        # 势能基于“下一个阶段性目标”
+        current_potential = (
+            - self.reward_weight['W_POS_PROG'] * dist_next_target          # 接近下一个目标点
+            - self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target       # 匹配下一个目标的速度
+            - self.reward_weight['W_FINAL_PULL'] * dist_to_final_target    # 最终目标
+        )
+
         # 计算进度奖励 (R_progress)
-        R_approach = - np.linalg.norm(Q_state[24:27]) # 距离最终目标的距离
+        # 奖励 = gamma * 当前势能 - 上一步势能
+        # 乘以gamma是理论上保证策略不变性的做法，简化版可以省略gamma
+        # 加入了穿门时刻不计算势能、只给出穿门奖励的代码
+        if phase_switched:
+            self.last_potential = current_potential
+            R_progress = 0
+        else:
+            R_progress = current_potential - self.last_potential
 
-        R_centering = 0
-        R_velocity_align = 0
-        if self.phase_idx != 2:
-            R_centering = - np.linalg.norm(Q_state[12 + self.phase_idx * 6 : 15 + self.phase_idx * 6]) # 相对下一个门的距离
-            R_velocity_align = - np.linalg.norm(Q_state[15 + self.phase_idx * 6]) # 相对下一个门x方向的速度
+        # 成本惩罚 (R_cost)
+        R_action_magnitude = -self.reward_weight['W_ACTION_MAG'] * np.linalg.norm(control_signal)
+        R_body_rate = -self.reward_weight['W_BODY_RATE'] * np.linalg.norm(current_drone_state[10:])
+        R_time_cost = -self.reward_weight['W_TIME_COST']
 
-        R_progress = 0.2 * R_approach + 1.0 * R_centering + 5.0 * R_velocity_align # 进度奖励加权
+        # 计算机头对准下一门中心的角度对齐惩罚
+        if dist_next_target > 1e-6: # 避免除以零
+            target_direction_vec = Q_state[12:15] / dist_next_target
+        # print(Q_state[12:15])
+        body_forward_vec = np.array([1.0, 0.0, 0.0])
+        world_forward_vec = self.quat_rotate_vector(current_drone_state[6:10], body_forward_vec)
+        alignment_dot_product = np.dot(world_forward_vec, target_direction_vec)
+        # print(world_forward_vec, target_direction_vec)
+        R_alignment = self.reward_weight['W_ALIGNMENT'] * ((alignment_dot_product + 1.0) / 2.0) # [0,2]
 
-        # 计算成本惩罚 (R_cost)
-        R_action_cost = - 1.0 * np.linalg.norm(control_signal) # 控制代价
-        R_stability_cost = - 5.0 * np.linalg.norm(current_drone_state[10:]) # 无人机角速度尽可能小
-        R_time_cost = - 1.0 # 耗时代价
-        R_height_punishment = - 0.2 * (Q_state[13 + self.phase_idx * 6])**2 # 高度代价
-        R_cost = R_action_cost + R_stability_cost + R_time_cost + R_height_punishment
+        R_cost = R_action_magnitude + R_body_rate + R_time_cost + R_alignment
 
-        # 计算事件奖励 (R_event)
-        R_event = self.phase_idx * 100
+        # 事件奖励 (R_event)：终止事件
+        R_event = 0
         if collided:
-            R_event -= 200
-            self.done=True
+            R_event = self.reward_weight['CRASH_PENALTY']
+            self.done = True
             self.info=0
             self.i+=1
-        elif np.linalg.norm(Q_state[24:27]) < self.target_distance:
-            R_event += 300
+        elif dist_to_final_target * 10 < self.target_distance:
+            R_event = self.reward_weight['SUCCESS_BONUS']
             self.done = True
-            self.info = 1
-            self.i += 1
+            self.info=1
+            self.i+=1
 
-        # 5. 计算总奖励
-        reward = (R_progress + R_event + R_cost)/20
-        
+
+        # 最终总奖励
+        # print(f"位置进度：{- self.reward_weight['W_POS_PROG'] * dist_next_target:3f}, 速度匹配：{- self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target:3f}, 最终进度：{- self.reward_weight['W_FINAL_PULL'] * dist_to_final_target:3f}")
+        # print(f"动作幅度：{R_action_magnitude:3f}, 角速度：{R_body_rate:3f}, 时间：{R_time_cost:3f}, 对准目标:{R_alignment:3f}")
+        print(f"last potential:{self.last_potential:3f}, current_potential:{current_potential:3f}")
+        print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
+        reward = R_progress + R_cost + R_event + pass_reward
+
+        # 更新势能值
+        if not phase_switched:
+            self.last_potential = current_potential
+                
         return current_drone_state, img_tensor, Q_state, reward, self.done, self.phase_idx, self.info, self.elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel

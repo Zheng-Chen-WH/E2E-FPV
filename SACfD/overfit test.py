@@ -36,7 +36,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
     'LOAD PARA': False, #是否读取参数
-    'task':'Test', # 测试或训练或画图，Train,Test,Plot
+    'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
     'plot_title':'reward-steps.svg',
@@ -44,7 +44,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
     'seed':20000323, #网络初始化的时候用的随机数种子  
     'max_epoch':1000,
-    'logs':False, #是否留存训练参数供tensorboard分析 
+    'logs':True, #是否留存训练参数供tensorboard分析 
     'embedding_dim':128,
     'num_frames':4,
     'door_frames':cfg.door_frames_names,
