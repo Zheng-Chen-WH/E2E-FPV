@@ -245,7 +245,7 @@ if args['task']=='Train':
                     next_drone_state, next_img_tensor, next_Q_state,\
                         reward, done, phase_idx, info, elapsed_time,\
                         relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
-                    if len(expert_memory) > args['batch_size'] and len(exploration_memory) > args['batch_size']:
+                    if len(expert_memory) > args['batch_size']*5 and len(exploration_memory) > args['batch_size']*5:
                         # Number of updates per step in environment 每次交互之后可以进行多次训练
                         for i in range(args['updates_per_episode']):
                             # Update parameters of all the networks
