@@ -128,7 +128,7 @@ class env:
             
             # 检测“穿越平面”事件：从Y值小的一侧移动到Y值大的一侧
             if self.last_y_pos < target_door_y+ self.pass_threshold and current_y >= target_door_y+ self.pass_threshold:
-                print("穿越门1平面")
+                # print("穿越门1平面")
                 
                 # 在穿越瞬间，验证X和Z坐标是否在门框内
                 door_width = door_params["width"]   # 您需要在door_params中添加门的尺寸
@@ -141,12 +141,12 @@ class env:
                 is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
                 
                 if is_x_valid and is_z_valid:
-                    print("成功穿越门1！")
+                    # print("成功穿越门1！")
                     passage_successful = True
                     # new_phase_idx = 1  # 切换到下一阶段
                     event_reward = 5  # 给予一次性的里程碑奖励
                 else:
-                    print("从门1旁边绕过或撞门框！")
+                    # print("从门1旁边绕过或撞门框！")
                     # 如果没有成功穿越，可以给予一个小的负奖励，或者什么都不做
                     event_reward = -3
         
@@ -155,7 +155,7 @@ class env:
             target_door_y = waypoints_y[2]
             
             if self.last_y_pos < target_door_y and current_y >= target_door_y:
-                print("穿越门2平面")
+                # print("穿越门2平面")
 
                 door_width = door_params["width"]
                 door_height = door_params["height"]
@@ -165,12 +165,12 @@ class env:
                 is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
 
                 if is_x_valid and is_z_valid:
-                    print("成功穿越门2！")
+                    # print("成功穿越门2！")
                     # new_phase_idx = 2  # 切换到最终目标阶段
                     passage_successful = True
                     event_reward = 5  # 再次给予奖励
                 else:
-                    print("从门2旁边绕过或撞门框！")
+                    # print("从门2旁边绕过或撞门框！")
                     event_reward = -3
         
         # 更新上一步的Y坐标，为下一次检测做准备
