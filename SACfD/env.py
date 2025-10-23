@@ -576,8 +576,8 @@ class env:
         # 最终总奖励
         # print(f"位置进度：{- self.reward_weight['W_POS_PROG'] * dist_next_target:3f}, 速度匹配：{- self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target:3f}, 最终进度：{- self.reward_weight['W_FINAL_PULL'] * dist_to_final_target:3f}")
         # print(f"动作幅度：{R_action_magnitude:3f}, 角速度：{R_body_rate:3f}, 时间：{R_time_cost:3f}, 对准目标:{R_alignment:3f}")
-        print(f"last potential:{self.last_potential:3f}, current_potential:{current_potential:3f}")
-        print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
+        # print(f"last potential:{self.last_potential:3f}, current_potential:{current_potential:3f}")
+        # print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
         reward = R_progress + R_cost + R_event + pass_reward
 
         # 更新势能值
