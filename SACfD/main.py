@@ -9,6 +9,7 @@ from replay_memory import ReplayMemory, DAggerMemory
 import time
 from utils import map_value
 import math
+import os
 
 # 超参数字典
 args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True)
@@ -35,7 +36,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': False, #是否读取参数
+    'LOAD PARA': True, #是否读取参数
     'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
@@ -150,7 +151,7 @@ if args['task']=='Train':
     k = 0
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("best_1", evaluate=False)
+        agent.load_model("master_22_-9.94_7.1159_34.8", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
@@ -224,7 +225,7 @@ if args['task']=='Train':
 
         '''DAgger环节，智能体关闭eval模式进行探索'''
         if i_episode % args['evaluate_freq'] == 0:
-            episodes = args['evaluate_freq'] * 5 # 交替mpc和dagger
+            episodes = args['evaluate_freq'] * 2 # 交替mpc和dagger
             for _ in range(episodes):
                 episode_reward = 0
                 done=False
@@ -284,9 +285,9 @@ if args['task']=='Train':
                         break
                 print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
 
-        if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5: # 5轮mpc+dagger之后进行一轮测试
+        if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 5轮mpc+dagger之后进行一轮测试
             avg_reward = 0.
-            episodes = args['evaluate_freq'] * 5 # 交替强化和dagger
+            episodes = args['evaluate_freq'] * 5
             done_num=0
             avg_step = 0
             for _ in range(episodes):
@@ -331,7 +332,7 @@ if args['task']=='Train':
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
 
-        if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0): # 大于100轮之后，每20个模型重新加载一次
+        if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0) and os.path.isfile("best_master_model.pt"): # 大于100轮之后，每20个模型重新加载一次
             agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
