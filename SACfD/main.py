@@ -36,7 +36,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': True, #是否读取参数
+    'LOAD PARA': False, #是否读取参数
     'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
@@ -225,7 +225,7 @@ if args['task']=='Train':
 
         '''DAgger环节，智能体关闭eval模式进行探索'''
         if i_episode % args['evaluate_freq'] == 0:
-            episodes = args['evaluate_freq'] * 2 # 交替mpc和dagger
+            episodes = args['evaluate_freq'] * 5 # 交替mpc和dagger
             for _ in range(episodes):
                 episode_reward = 0
                 done=False

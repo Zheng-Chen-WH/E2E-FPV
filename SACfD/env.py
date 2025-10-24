@@ -139,10 +139,10 @@ class env:
                 # 检查Z坐标
                 # print("z relative distance:", relative_target_position[2])
                 is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
+                passage_successful = True
                 
                 if is_x_valid and is_z_valid:
                     # print("成功穿越门1！")
-                    passage_successful = True
                     # new_phase_idx = 1  # 切换到下一阶段
                     event_reward = 5  # 给予一次性的里程碑奖励
                 else:
@@ -163,11 +163,11 @@ class env:
                 is_x_valid = abs(relative_target_position[0]) < (door_width / 2.0)
                 # print("z relative distance:", relative_target_position[2])
                 is_z_valid = abs(relative_target_position[2]) < (door_height / 2.0)
+                passage_successful = True
 
                 if is_x_valid and is_z_valid:
                     # print("成功穿越门2！")
                     # new_phase_idx = 2  # 切换到最终目标阶段
-                    passage_successful = True
                     event_reward = 5  # 再次给予奖励
                 else:
                     # print("从门2旁边绕过或撞门框！")
@@ -396,28 +396,22 @@ class env:
         self.initial_pose = None # 在第一次执行movedoor的时候将设为第一个门的姿态
 
         for i, door_name in enumerate(self.door_frames):
-            try:
-                # 获取initial pose
-                current_door_pose_raw = self.client.simGetObjectPose(door_name)
-                if self.initial_pose is None: # 储存第一个门的朝向
-                    self.initial_pose = current_door_pose_raw   
-                initial_door_z = current_door_pose_raw.position.z_val # 保留z坐标
+            # 获取initial pose
+            current_door_pose_raw = self.client.simGetObjectPose(door_name)
+            if self.initial_pose is None: # 储存第一个门的朝向
+                self.initial_pose = current_door_pose_raw   
+            initial_door_z = current_door_pose_raw.position.z_val # 保留z坐标
 
-                # 随机生成门初始位置
-                new_x = 0 + np.random.uniform(-1, 1)
-                new_y = (i + 1) * 15 + np.random.uniform(-2, 2)
-                
-                self._move_door(door_name, np.array([new_x, new_y, initial_door_z]))
-                
-                self.door_initial_x_positions.append(new_x)
-                self.door_current_x_positions.append(new_x) 
-                self.door_z_positions.append(initial_door_z)
-                self.waypoints_y.append(new_y)
-
-            except Exception as e:
-                print(f"Error processing door '{door_name}': {e}")
-                print(f"请确保场景中存在名为 '{door_name}' 的对象。")
-                raise
+            # 随机生成门初始位置
+            new_x = 0 + np.random.uniform(-1, 1)
+            new_y = (i + 1) * 15 + np.random.uniform(-2, 2)
+            
+            self._move_door(door_name, np.array([new_x, new_y, initial_door_z]))
+            
+            self.door_initial_x_positions.append(new_x)
+            self.door_current_x_positions.append(new_x) 
+            self.door_z_positions.append(initial_door_z)
+            self.waypoints_y.append(new_y)
 
         self.door_param["initial_x_pos"] = self.door_initial_x_positions
 
@@ -577,7 +571,7 @@ class env:
         # print(f"位置进度：{- self.reward_weight['W_POS_PROG'] * dist_next_target:3f}, 速度匹配：{- self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target:3f}, 最终进度：{- self.reward_weight['W_FINAL_PULL'] * dist_to_final_target:3f}")
         # print(f"动作幅度：{R_action_magnitude:3f}, 角速度：{R_body_rate:3f}, 时间：{R_time_cost:3f}, 对准目标:{R_alignment:3f}")
         # print(f"last potential:{self.last_potential:3f}, current_potential:{current_potential:3f}")
-        # print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
+        print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
         reward = R_progress + R_cost + R_event + pass_reward
 
         # 更新势能值
