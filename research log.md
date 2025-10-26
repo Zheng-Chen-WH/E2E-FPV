@@ -394,3 +394,5 @@
   + 考虑PPO，收集足够多数据之后固定次数反复训练，不再off-policy
   + 对图像进行经典CV预处理？
         
+## 10.26 --by zzy
++ add ResNet+GRU pretrain: pretrain_aux.py, example_load_pretrained.py
