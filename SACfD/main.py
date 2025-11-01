@@ -44,7 +44,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
     'seed':20000323, #网络初始化的时候用的随机数种子  
-    'max_epoch':10000,
+    'max_epoch':1000000,
     'logs':False, #是否留存训练参数供tensorboard分析 
     'embedding_dim':128,
     'num_frames':4,
@@ -151,7 +151,7 @@ if args['task']=='Train':
     k = 0
     min_loss = 100
     if args['LOAD PARA']==True:
-        agent.load_model("master_22_-9.94_7.1159_34.8", evaluate=False)
+        agent.load_model("best_master", evaluate=False)
         # memory.load_buffer("master")
         
     for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
