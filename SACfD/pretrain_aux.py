@@ -121,12 +121,13 @@ from config import *
 from CEM_MPC import CEM_MPC
 
 # Pretraining specific hyperparameters
-PRETRAIN_EPISODES = 500  # Number of random flight episodes for data collection
+PRETRAIN_EPISODES = 200  # Number of random flight episodes for data collection
 PRETRAIN_BATCH_SIZE = 32
 PRETRAIN_LEARNING_RATE = 1e-3
 PRETRAIN_EPOCHS_PER_EPISODE = 5  # Train multiple epochs on collected data
 PRETRAIN_BUFFER_SIZE = 10000
 PRETRAIN_SAVE_INTERVAL = 50  # Save checkpoint every N episodes
+PRETRAIN_MIN_BUFFER_SIZE = 500  # Minimum buffer size before starting training (collect ~10 episodes first)
 USE_EXPERT_DATA = True  # Set to True to use CEM-MPC for data collection, False for random actions
 
 # Loss weights (same as main training)
@@ -311,11 +312,27 @@ def collect_expert_flight_data(env_instance, buffer, mpc_controller, num_steps=1
     collision_count = 0
     success_count = 0
     done = False
+    episode_initialized = False
     
     print("  Collecting expert demonstrations using CEM-MPC...")
     
     while step_count < num_steps:
         try:
+            # Initialize MPC controller after environment reset
+            if not episode_initialized:
+                # Get environment parameters needed by MPC
+                drone_state, _, _, _, _, _ = env_instance.get_drone_state()
+                
+                # Reset MPC controller with environment parameters
+                mpc_controller.reset(
+                    current_drone_state=drone_state,
+                    final_target_state=env_instance.final_target_state,
+                    waypoints_y=env_instance.waypoints_y,
+                    door_z_positions=env_instance.door_z_positions,
+                    door_param=env_instance.door_param
+                )
+                episode_initialized = True
+            
             # Get current drone state for MPC (13D state vector)
             drone_state, _, _, _, _, _ = env_instance.get_drone_state()
             
@@ -355,6 +372,7 @@ def collect_expert_flight_data(env_instance, buffer, mpc_controller, num_steps=1
                 
                 # Reset and continue collecting
                 env_instance.reset()
+                episode_initialized = False  # Need to reinitialize MPC for new episode
                 done = False
                 print(f"    Episode ended: {'Success' if info == 1 else 'Collision'}, collected {step_count}/{num_steps} steps")
                 
@@ -372,11 +390,15 @@ def collect_expert_flight_data(env_instance, buffer, mpc_controller, num_steps=1
     return collision_count, success_count
 
 
-def train_epoch(model, buffer, optimizer, device, batch_size):
+def train_epoch(model, buffer, optimizer, device, batch_size, return_predictions=False):
     """
     Train for one epoch on the collected data.
+    
+    Args:
+        return_predictions: If True, return predictions and ground truth for inspection
     """
     if len(buffer) < batch_size:
+        print("Buffer too small for training epoch.")
         return None
     
     # Sample batch
@@ -410,13 +432,39 @@ def train_epoch(model, buffer, optimizer, device, batch_size):
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     optimizer.step()
     
-    return {
+    loss_dict = {
         'total_loss': total_loss.item(),
         'loss_pos': loss_pos.item(),
         'loss_rot': loss_rot.item(),
         'loss_vel': loss_vel.item(),
         'loss_ang_vel': loss_ang_vel.item()
     }
+    
+    # Return predictions if requested
+    if return_predictions:
+        # Extract position and velocity predictions
+        pred_pos = resnet_output[:, 0:3]  # (B, 3)
+        pred_vel = gru_output[:, 0:3]  # (B, 3)
+        pred_ang_vel = gru_output[:, 3:6]  # (B, 3)
+        
+        # Convert 6D rotation to 9D for comparison
+        pred_rot_6d = resnet_output[:, 3:9]  # (B, 6)
+        pred_rot_mat = six_d_to_rot_mat(pred_rot_6d)  # (B, 3, 3)
+        
+        loss_dict['predictions'] = {
+            'position': pred_pos.detach().cpu().numpy(),
+            'rotation': pred_rot_mat.detach().cpu().numpy(),
+            'velocity': pred_vel.detach().cpu().numpy(),
+            'angular_velocity': pred_ang_vel.detach().cpu().numpy()
+        }
+        loss_dict['ground_truth'] = {
+            'position': positions.detach().cpu().numpy(),
+            'rotation': rot_mats.detach().cpu().numpy(),
+            'velocity': velocities.detach().cpu().numpy(),
+            'angular_velocity': ang_vels.detach().cpu().numpy()
+        }
+    
+    return loss_dict
 
 
 def pretrain_vision_encoder():
@@ -427,14 +475,19 @@ def pretrain_vision_encoder():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Create directories
+    # Get absolute paths based on script location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Create directories with absolute paths
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     data_type = "expert" if USE_EXPERT_DATA else "random"
-    save_dir = f"pretrained_models/aux_pretrain_{data_type}_{timestamp}"
+    save_dir = os.path.join(script_dir, "pretrained_models", f"aux_pretrain_{data_type}_{timestamp}")
+    tensorboard_dir = os.path.join(script_dir, "runs", f"aux_pretrain_{data_type}_{timestamp}")
     os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(tensorboard_dir, exist_ok=True)
     
     # TensorBoard
-    writer = SummaryWriter(f"runs/aux_pretrain_{data_type}_{timestamp}")
+    writer = SummaryWriter(tensorboard_dir)
     
     # Initialize environment
     env_args = {
@@ -511,10 +564,15 @@ def pretrain_vision_encoder():
     total_successes = 0
     total_collisions = 0
     
+    # Timing statistics
+    training_start_time = time.time()
+    episode_times = []
+    
     print("Starting pretraining...")
     print(f"Data collection mode: {'EXPERT (CEM-MPC)' if USE_EXPERT_DATA else 'RANDOM'}")
     print(f"Total episodes: {PRETRAIN_EPISODES}")
     print(f"Save directory: {save_dir}")
+    print(f"TensorBoard directory: {tensorboard_dir}")
     
     for episode in range(PRETRAIN_EPISODES):
         episode_start_time = time.time()
@@ -540,13 +598,17 @@ def pretrain_vision_encoder():
             )
             total_collisions += collision_count
         
-        # Train on collected data
-        if len(buffer) >= PRETRAIN_BATCH_SIZE:
+        # Train on collected data (only after collecting enough samples)
+        if len(buffer) < PRETRAIN_MIN_BUFFER_SIZE:
+            print(f"Buffer size: {len(buffer)}/{PRETRAIN_MIN_BUFFER_SIZE} - Collecting more data before training...")
+        elif len(buffer) >= PRETRAIN_BATCH_SIZE:
             print(f"Training on {len(buffer)} samples...")
             epoch_losses = []
             
             for epoch in range(PRETRAIN_EPOCHS_PER_EPISODE):
-                loss_dict = train_epoch(model, buffer, optimizer, device, PRETRAIN_BATCH_SIZE)
+                # Get predictions on the last epoch to inspect
+                return_preds = (epoch == PRETRAIN_EPOCHS_PER_EPISODE - 1) and ((episode + 1) % 5 == 0)
+                loss_dict = train_epoch(model, buffer, optimizer, device, PRETRAIN_BATCH_SIZE, return_predictions=return_preds)
                 if loss_dict is not None:
                     epoch_losses.append(loss_dict)
                     global_step += 1
@@ -557,6 +619,42 @@ def pretrain_vision_encoder():
                     writer.add_scalar('Loss/rotation', loss_dict['loss_rot'], global_step)
                     writer.add_scalar('Loss/velocity', loss_dict['loss_vel'], global_step)
                     writer.add_scalar('Loss/angular_velocity', loss_dict['loss_ang_vel'], global_step)
+                    
+                    # Print predictions vs ground truth every 5 episodes
+                    if return_preds and 'predictions' in loss_dict:
+                        print("\n  ──────────────────────────────────────────────────────────")
+                        print("  PREDICTION vs GROUND TRUTH COMPARISON (first sample):")
+                        print("  ──────────────────────────────────────────────────────────")
+                        
+                        pred = loss_dict['predictions']
+                        gt = loss_dict['ground_truth']
+                        
+                        # Show first sample in batch
+                        print(f"  Position (relative to next target, ÷10):")
+                        print(f"    Predicted: [{pred['position'][0][0]:7.4f}, {pred['position'][0][1]:7.4f}, {pred['position'][0][2]:7.4f}]")
+                        print(f"    Ground Truth: [{gt['position'][0][0]:7.4f}, {gt['position'][0][1]:7.4f}, {gt['position'][0][2]:7.4f}]")
+                        print(f"    Error: [{abs(pred['position'][0][0] - gt['position'][0][0]):7.4f}, "
+                              f"{abs(pred['position'][0][1] - gt['position'][0][1]):7.4f}, "
+                              f"{abs(pred['position'][0][2] - gt['position'][0][2]):7.4f}]")
+                        
+                        print(f"\n  Velocity (relative to target, ÷10):")
+                        print(f"    Predicted: [{pred['velocity'][0][0]:7.4f}, {pred['velocity'][0][1]:7.4f}, {pred['velocity'][0][2]:7.4f}]")
+                        print(f"    Ground Truth: [{gt['velocity'][0][0]:7.4f}, {gt['velocity'][0][1]:7.4f}, {gt['velocity'][0][2]:7.4f}]")
+                        print(f"    Error: [{abs(pred['velocity'][0][0] - gt['velocity'][0][0]):7.4f}, "
+                              f"{abs(pred['velocity'][0][1] - gt['velocity'][0][1]):7.4f}, "
+                              f"{abs(pred['velocity'][0][2] - gt['velocity'][0][2]):7.4f}]")
+                        
+                        print(f"\n  Angular Velocity (rad/s):")
+                        print(f"    Predicted: [{pred['angular_velocity'][0][0]:7.4f}, {pred['angular_velocity'][0][1]:7.4f}, {pred['angular_velocity'][0][2]:7.4f}]")
+                        print(f"    Ground Truth: [{gt['angular_velocity'][0][0]:7.4f}, {gt['angular_velocity'][0][1]:7.4f}, {gt['angular_velocity'][0][2]:7.4f}]")
+                        print(f"    Error: [{abs(pred['angular_velocity'][0][0] - gt['angular_velocity'][0][0]):7.4f}, "
+                              f"{abs(pred['angular_velocity'][0][1] - gt['angular_velocity'][0][1]):7.4f}, "
+                              f"{abs(pred['angular_velocity'][0][2] - gt['angular_velocity'][0][2]):7.4f}]")
+                        
+                        print(f"\n  Rotation Matrix (first row only for brevity):")
+                        print(f"    Predicted: [{pred['rotation'][0][0][0]:7.4f}, {pred['rotation'][0][0][1]:7.4f}, {pred['rotation'][0][0][2]:7.4f}]")
+                        print(f"    Ground Truth: [{gt['rotation'][0][0][0]:7.4f}, {gt['rotation'][0][0][1]:7.4f}, {gt['rotation'][0][0][2]:7.4f}]")
+                        print("  ──────────────────────────────────────────────────────────\n")
             
             # Average losses for this episode
             if epoch_losses:
@@ -567,6 +665,25 @@ def pretrain_vision_encoder():
                 avg_loss_ang = np.mean([l['loss_ang_vel'] for l in epoch_losses])
                 
                 episode_time = time.time() - episode_start_time
+                episode_times.append(episode_time)
+                
+                # Calculate timing statistics
+                avg_episode_time = np.mean(episode_times)
+                remaining_episodes = PRETRAIN_EPISODES - (episode + 1)
+                estimated_remaining_time = avg_episode_time * remaining_episodes
+                total_elapsed_time = time.time() - training_start_time
+                
+                # Format time strings
+                def format_time(seconds):
+                    hours = int(seconds // 3600)
+                    minutes = int((seconds % 3600) // 60)
+                    secs = int(seconds % 60)
+                    if hours > 0:
+                        return f"{hours}h {minutes}m {secs}s"
+                    elif minutes > 0:
+                        return f"{minutes}m {secs}s"
+                    else:
+                        return f"{secs}s"
                 
                 print(f"Episode {episode + 1} completed in {episode_time:.2f}s")
                 print(f"  Buffer size: {len(buffer)}")
@@ -579,6 +696,7 @@ def pretrain_vision_encoder():
                 print(f"  Avg Rot Loss: {avg_loss_rot:.6f}")
                 print(f"  Avg Vel Loss: {avg_loss_vel:.6f}")
                 print(f"  Avg Ang Loss: {avg_loss_ang:.6f}")
+                print(f"  Time: Episode {format_time(episode_time)} | Total Elapsed {format_time(total_elapsed_time)} | Est. Remaining {format_time(estimated_remaining_time)}")
                 
                 # Save best model
                 if avg_loss < best_loss:
@@ -591,6 +709,33 @@ def pretrain_vision_encoder():
                         'loss': best_loss,
                     }, save_path)
                     print(f"  *** New best model saved! Loss: {best_loss:.6f} ***")
+        else:
+            # No training happened (buffer too small)
+            episode_time = time.time() - episode_start_time
+            episode_times.append(episode_time)
+            
+            # Calculate timing statistics
+            avg_episode_time = np.mean(episode_times)
+            remaining_episodes = PRETRAIN_EPISODES - (episode + 1)
+            estimated_remaining_time = avg_episode_time * remaining_episodes
+            total_elapsed_time = time.time() - training_start_time
+            
+            # Format time strings
+            def format_time(seconds):
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                if hours > 0:
+                    return f"{hours}h {minutes}m {secs}s"
+                elif minutes > 0:
+                    return f"{minutes}m {secs}s"
+                else:
+                    return f"{secs}s"
+            
+            print(f"Episode {episode + 1} completed in {episode_time:.2f}s - Data collection only")
+            if USE_EXPERT_DATA:
+                print(f"  Total successes: {total_successes}, Total collisions: {total_collisions}")
+            print(f"  Time: Episode {format_time(episode_time)} | Total Elapsed {format_time(total_elapsed_time)} | Est. Remaining {format_time(estimated_remaining_time)}")
         
         # Periodic checkpoint
         if (episode + 1) % PRETRAIN_SAVE_INTERVAL == 0:
@@ -611,8 +756,24 @@ def pretrain_vision_encoder():
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': best_loss,
     }, final_path)
+    
+    # Calculate total training time
+    total_training_time = time.time() - training_start_time
+    def format_time(seconds):
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        if hours > 0:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes > 0:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
+    
     print(f"\nFinal model saved: {final_path}")
     print(f"Best loss achieved: {best_loss:.6f}")
+    print(f"Total training time: {format_time(total_training_time)}")
+    print(f"Average time per episode: {np.mean(episode_times):.2f}s")
     
     writer.close()
     env_instance.client.reset()
