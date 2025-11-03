@@ -18,12 +18,13 @@ These are the SAME auxiliary heads used in the main SAC training (sac.py).
 HOW IT WORKS
 ═══════════════════════════════════════════════════════════════════════════════
 1. DATA COLLECTION:
-   - Two modes available:
+   - Three modes available:
      a) RANDOM: Flies the drone with random actions (fast, diverse, noisy)
-     b) EXPERT: Uses CEM-MPC controller (slower, higher quality, better trajectories)
+     b) EXPERT: Uses CEM-MPC controller (slower, high quality, optimal trajectories)
+     c) POLICY: Uses a pretrained RL policy (medium quality, learned behaviors)
    - Collects: image sequences + ground truth state from get_drone_state()
    - Ground truth is computed from AirSim's perfect state (position, velocity, etc.)
-   - Set USE_EXPERT_DATA = True/False to choose mode
+   - Set DATA_COLLECTION_MODE = 'random', 'expert', or 'policy'
    
 2. TRAINING:
    - Supervised learning with MSE loss
@@ -82,16 +83,18 @@ USAGE
 HYPERPARAMETERS
 ═══════════════════════════════════════════════════════════════════════════════
 Adjust these in the script if needed:
-  - USE_EXPERT_DATA: True/False (use CEM-MPC or random actions)
+  - DATA_COLLECTION_MODE: 'expert', 'random', or 'policy'
+  - PRETRAINED_POLICY_PATH: path to model (required if mode='policy')
   - PRETRAIN_EPISODES: 500 (number of flight episodes)
   - PRETRAIN_BATCH_SIZE: 32
   - PRETRAIN_LEARNING_RATE: 1e-3 (higher than main training)
   - PRETRAIN_EPOCHS_PER_EPISODE: 5 (train multiple times on same data)
   - PRETRAIN_BUFFER_SIZE: 10000 (replay buffer for collected data)
 
-Expert vs Random Data Collection:
-  - EXPERT (CEM-MPC): Better trajectories, slower collection, recommended
-  - RANDOM: Faster collection, more diverse but noisy, good for exploration
+Data Collection Mode Comparison:
+  - EXPERT: CEM-MPC optimal control, high quality, slow (~10s/step), best performance
+  - POLICY: Trained RL agent, good quality, medium speed (~1s/step), learned behaviors
+  - RANDOM: Random actions, noisy, fast (~0.5s/step), diverse exploration
 
 ═══════════════════════════════════════════════════════════════════════════════
 BENEFITS
@@ -116,7 +119,7 @@ from collections import deque
 from datetime import datetime
 
 from env import env
-from model import GRU, init_weights
+from model import GRU, init_weights, GaussianPolicy
 from config import *
 from CEM_MPC import CEM_MPC
 
@@ -128,7 +131,14 @@ PRETRAIN_EPOCHS_PER_EPISODE = 5  # Train multiple epochs on collected data
 PRETRAIN_BUFFER_SIZE = 10000
 PRETRAIN_SAVE_INTERVAL = 50  # Save checkpoint every N episodes
 PRETRAIN_MIN_BUFFER_SIZE = 500  # Minimum buffer size before starting training (collect ~10 episodes first)
-USE_EXPERT_DATA = True  # Set to True to use CEM-MPC for data collection, False for random actions
+
+# Data collection mode: 'expert', 'random', or 'policy'
+# 'expert' = CEM-MPC, 'random' = random actions, 'policy' = trained model
+DATA_COLLECTION_MODE = 'expert'
+PRETRAINED_POLICY_PATH = "master_now_best_model.pt"  # Path to pretrained policy model
+
+# Legacy flag for backward compatibility
+USE_EXPERT_DATA = (DATA_COLLECTION_MODE == 'expert')
 
 # Loss weights (same as main training)
 AUX_LOSS_WEIGHT_PRETRAIN = 1.0
@@ -390,6 +400,109 @@ def collect_expert_flight_data(env_instance, buffer, mpc_controller, num_steps=1
     return collision_count, success_count
 
 
+def collect_policy_flight_data(env_instance, buffer, policy_model, device, num_steps=100):
+    """
+    Collect data by flying the drone with a pretrained policy model.
+    This uses an already trained RL agent to generate demonstrations.
+    
+    Args:
+        env_instance: Environment instance
+        buffer: PretrainBuffer to store data
+        policy_model: Trained GaussianPolicy model
+        device: torch device
+        num_steps: Number of steps to collect
+    
+    Returns:
+        collision_count: Number of collisions during data collection
+        success_count: Number of successful episodes (reached target)
+    """
+    step_count = 0
+    collision_count = 0
+    success_count = 0
+    done = False
+    hidden_state = None
+    
+    print("  Collecting demonstrations using pretrained policy...")
+    
+    policy_model.eval()  # Set to evaluation mode
+    
+    while step_count < num_steps:
+        try:
+            # Get current observation from environment
+            # We need the image sequence and state for the policy
+            img_tensor = env_instance.get_img_sequence()[0]  # Get image tensor
+            
+            # Get policy action
+            with torch.no_grad():
+                img_tensor_gpu = img_tensor.to(device)
+                
+                # Policy expects: (img_seq, pi_state)
+                # pi_state is the relative position to next target (already in the returned data)
+                drone_state, _, _, _, _, _ = env_instance.get_drone_state()
+                
+                # Get relative position to next target for policy input
+                if env_instance.phase_idx < len(env_instance.waypoints_y):
+                    # Still going through gates
+                    next_target = np.array([
+                        env_instance.waypoints_y[env_instance.phase_idx],
+                        0.0,  # y-position
+                        env_instance.door_z_positions[env_instance.phase_idx]
+                    ])
+                else:
+                    # Going to final target
+                    next_target = env_instance.final_target_state[:3]
+                
+                current_pos = drone_state[:3]
+                pi_state = torch.tensor(next_target - current_pos, dtype=torch.float32).unsqueeze(0).to(device)
+                
+                # Get action from policy (deterministic mode for data collection)
+                action, _, _, hidden_state = policy_model.sample(img_tensor_gpu, pi_state, hidden_state)
+                action_np = action.cpu().numpy().flatten()
+            
+            # Apply action to environment
+            _, img_tensor_collected, _, reward, done, _, info, _, \
+                relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = env_instance.step(action_np)
+            
+            # Remove batch dimension from img_tensor
+            img_seq_np = img_tensor_collected.squeeze(0).cpu().numpy()  # (T, C, H, W)
+            
+            # Use the LAST frame's ground truth
+            pos = relative_next_target_pos[-1]  # (3,)
+            rot_mat = attitude_9d[-1]  # (3, 3)
+            vel = relative_next_target_vel[-1]  # (3,)
+            ang_vel = fpv_angular_vel[-1]  # (3,)
+            
+            # Store in buffer
+            buffer.push(img_seq_np, pos, rot_mat, vel, ang_vel)
+            step_count += 1
+            
+            if done:
+                if info == 0:  # Collision
+                    collision_count += 1
+                elif info == 1:  # Success
+                    success_count += 1
+                
+                # Reset and continue collecting
+                env_instance.reset()
+                hidden_state = None  # Reset hidden state for new episode
+                done = False
+                print(f"    Episode ended: {'Success' if info == 1 else 'Collision'}, collected {step_count}/{num_steps} steps")
+                
+        except Exception as e:
+            print(f"  Error during policy data collection: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                env_instance.reset()
+                hidden_state = None
+            except:
+                pass
+            continue
+    
+    print(f"  Policy collection complete: {step_count} steps, {success_count} successes, {collision_count} collisions")
+    return collision_count, success_count
+
+
 def train_epoch(model, buffer, optimizer, device, batch_size, return_predictions=False):
     """
     Train for one epoch on the collected data.
@@ -478,11 +591,10 @@ def pretrain_vision_encoder():
     # Get absolute paths based on script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Create directories with absolute paths
+    # Create directories with absolute paths - everything in one folder
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    data_type = "expert" if USE_EXPERT_DATA else "random"
-    save_dir = os.path.join(script_dir, "pretrained_models", f"aux_pretrain_{data_type}_{timestamp}")
-    tensorboard_dir = os.path.join(script_dir, "runs", f"aux_pretrain_{data_type}_{timestamp}")
+    save_dir = os.path.join(script_dir, "pretrained_models", f"aux_pretrain_{DATA_COLLECTION_MODE}_{timestamp}")
+    tensorboard_dir = os.path.join(save_dir, "logs")  # TensorBoard logs inside the save folder
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
     
@@ -504,9 +616,11 @@ def pretrain_vision_encoder():
     }
     env_instance = env(env_args)
     
-    # Initialize MPC controller if using expert data
+    # Initialize controllers based on data collection mode
     mpc_controller = None
-    if USE_EXPERT_DATA:
+    policy_model_pretrained = None
+    
+    if DATA_COLLECTION_MODE == 'expert':
         print("Initializing CEM-MPC controller for expert demonstrations...")
         cem_hyperparams = {
             'prediction_horizon': PREDICTION_HORIZON,
@@ -539,6 +653,34 @@ def pretrain_vision_encoder():
         }
         mpc_controller = CEM_MPC(cem_hyperparams, mpc_params)
         print("CEM-MPC controller initialized successfully")
+        
+    elif DATA_COLLECTION_MODE == 'policy':
+        if PRETRAINED_POLICY_PATH is None:
+            raise ValueError("PRETRAINED_POLICY_PATH must be set when DATA_COLLECTION_MODE='policy'")
+        
+        print(f"Loading pretrained policy from: {PRETRAINED_POLICY_PATH}")
+        policy_model_pretrained = GaussianPolicy(
+            Q_state_dim=Q_STATE_DIM,
+            Pi_mlp_dim=PI_STATE_DIM,
+            action_space_dim=ACTION_DIM,
+            resnet_aux_outputs=RESNET_AUX_DIM,
+            gru_aux_outputs=GRU_AUX_DIM,
+            gru_layers=GRU_LAYER,
+            drop_out=DROP_OUT,
+            hidden_sizes=NN_HIDDEN_SIZE,
+            activation=nn.ReLU,
+            action_range=[SCALED_CONTROL_MIN, SCALED_CONTROL_MAX]
+        ).to(device)
+        
+        # Load pretrained weights
+        checkpoint = torch.load(PRETRAINED_POLICY_PATH, map_location=device, weights_only=False)
+        policy_model_pretrained.load_state_dict(checkpoint['policy_state_dict'])
+        print("Pretrained policy loaded successfully")
+        
+    elif DATA_COLLECTION_MODE == 'random':
+        print("Using random actions for data collection")
+    else:
+        raise ValueError(f"Invalid DATA_COLLECTION_MODE: {DATA_COLLECTION_MODE}. Must be 'expert', 'random', or 'policy'")
     
     # Initialize model (GRU contains ResNet)
     model = GRU(
@@ -569,10 +711,11 @@ def pretrain_vision_encoder():
     episode_times = []
     
     print("Starting pretraining...")
-    print(f"Data collection mode: {'EXPERT (CEM-MPC)' if USE_EXPERT_DATA else 'RANDOM'}")
+    print(f"Data collection mode: {DATA_COLLECTION_MODE.upper()}")
     print(f"Total episodes: {PRETRAIN_EPISODES}")
-    print(f"Save directory: {save_dir}")
-    print(f"TensorBoard directory: {tensorboard_dir}")
+    print(f"Output directory: {save_dir}")
+    print(f"  - Models will be saved in: {save_dir}")
+    print(f"  - TensorBoard logs in: {tensorboard_dir}")
     
     for episode in range(PRETRAIN_EPISODES):
         episode_start_time = time.time()
@@ -584,15 +727,21 @@ def pretrain_vision_encoder():
             print(f"Error resetting environment: {e}")
             continue
         
-        # Collect data (expert or random)
+        # Collect data based on mode
         print(f"\nEpisode {episode + 1}/{PRETRAIN_EPISODES}: Collecting data...")
-        if USE_EXPERT_DATA:
+        if DATA_COLLECTION_MODE == 'expert':
             collision_count, success_count = collect_expert_flight_data(
                 env_instance, buffer, mpc_controller, num_steps=50
             )
             total_successes += success_count
             total_collisions += collision_count
-        else:
+        elif DATA_COLLECTION_MODE == 'policy':
+            collision_count, success_count = collect_policy_flight_data(
+                env_instance, buffer, policy_model_pretrained, device, num_steps=50
+            )
+            total_successes += success_count
+            total_collisions += collision_count
+        elif DATA_COLLECTION_MODE == 'random':
             collision_count = collect_random_flight_data(
                 env_instance, buffer, num_steps=50
             )
@@ -687,7 +836,7 @@ def pretrain_vision_encoder():
                 
                 print(f"Episode {episode + 1} completed in {episode_time:.2f}s")
                 print(f"  Buffer size: {len(buffer)}")
-                if USE_EXPERT_DATA:
+                if DATA_COLLECTION_MODE in ['expert', 'policy']:
                     print(f"  Total successes: {total_successes}, Total collisions: {total_collisions}")
                 else:
                     print(f"  Total collisions: {total_collisions}")
@@ -733,7 +882,7 @@ def pretrain_vision_encoder():
                     return f"{secs}s"
             
             print(f"Episode {episode + 1} completed in {episode_time:.2f}s - Data collection only")
-            if USE_EXPERT_DATA:
+            if DATA_COLLECTION_MODE in ['expert', 'policy']:
                 print(f"  Total successes: {total_successes}, Total collisions: {total_collisions}")
             print(f"  Time: Episode {format_time(episode_time)} | Total Elapsed {format_time(total_elapsed_time)} | Est. Remaining {format_time(estimated_remaining_time)}")
         
