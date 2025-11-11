@@ -124,13 +124,17 @@ from config import *
 from CEM_MPC import CEM_MPC
 
 # Pretraining specific hyperparameters
-PRETRAIN_EPISODES = 200  # Number of random flight episodes for data collection
+PRETRAIN_EPISODES = 6000  # Number of random flight episodes for data collection (total target episodes)
 PRETRAIN_BATCH_SIZE = 32
 PRETRAIN_LEARNING_RATE = 1e-3
 PRETRAIN_EPOCHS_PER_EPISODE = 5  # Train multiple epochs on collected data
 PRETRAIN_BUFFER_SIZE = 10000
 PRETRAIN_SAVE_INTERVAL = 50  # Save checkpoint every N episodes
 PRETRAIN_MIN_BUFFER_SIZE = 500  # Minimum buffer size before starting training (collect ~10 episodes first)
+
+# Resume training from checkpoint
+RESUME_FROM_CHECKPOINT = True  # Set to True to resume from a checkpoint
+CHECKPOINT_PATH = "pretrained_models/aux_pretrain_expert_20251108_165904/checkpoint_ep3300.pt"  # Path to checkpoint file (e.g., 'pretrained_models/aux_pretrain_20250108_123456/checkpoint_ep100.pt')
 
 # Data collection mode: 'expert', 'random', or 'policy'
 # 'expert' = CEM-MPC, 'random' = random actions, 'policy' = trained model
@@ -705,6 +709,38 @@ def pretrain_vision_encoder():
     best_loss = float('inf')
     total_successes = 0
     total_collisions = 0
+    start_episode = 0
+    
+    # Resume from checkpoint if specified
+    if RESUME_FROM_CHECKPOINT and CHECKPOINT_PATH is not None:
+        if os.path.exists(CHECKPOINT_PATH):
+            print(f"\nLoading checkpoint from: {CHECKPOINT_PATH}")
+            checkpoint = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
+            
+            # Load model and optimizer states
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            # Restore training state
+            start_episode = checkpoint.get('episode', 0) + 1  # Continue from next episode
+            best_loss = checkpoint.get('best_loss', float('inf'))
+            global_step = checkpoint.get('global_step', 0)
+            total_successes = checkpoint.get('total_successes', 0)
+            total_collisions = checkpoint.get('total_collisions', 0)
+            
+            print(f"  Resuming from episode {start_episode}")
+            print(f"  Best loss so far: {best_loss:.6f}")
+            print(f"  Global step: {global_step}")
+            print(f"  Total successes: {total_successes}")
+            print(f"  Total collisions: {total_collisions}")
+            
+            # Note: Buffer is NOT restored - will collect fresh data
+            # If you want to restore the buffer, you'd need to save/load it separately
+            print(f"  Note: Starting with empty buffer (will collect fresh data)")
+        else:
+            print(f"\nWarning: Checkpoint path '{CHECKPOINT_PATH}' not found. Starting from scratch.")
+    elif RESUME_FROM_CHECKPOINT:
+        print("\nWarning: RESUME_FROM_CHECKPOINT is True but CHECKPOINT_PATH is None. Starting from scratch.")
     
     # Timing statistics
     training_start_time = time.time()
@@ -713,11 +749,13 @@ def pretrain_vision_encoder():
     print("Starting pretraining...")
     print(f"Data collection mode: {DATA_COLLECTION_MODE.upper()}")
     print(f"Total episodes: {PRETRAIN_EPISODES}")
+    if start_episode > 0:
+        print(f"Resuming from episode: {start_episode}")
     print(f"Output directory: {save_dir}")
     print(f"  - Models will be saved in: {save_dir}")
     print(f"  - TensorBoard logs in: {tensorboard_dir}")
     
-    for episode in range(PRETRAIN_EPISODES):
+    for episode in range(start_episode, PRETRAIN_EPISODES):
         episode_start_time = time.time()
         
         # Reset environment
@@ -894,6 +932,10 @@ def pretrain_vision_encoder():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'buffer_size': len(buffer),
+                'best_loss': best_loss,
+                'global_step': global_step,
+                'total_successes': total_successes,
+                'total_collisions': total_collisions,
             }, checkpoint_path)
             print(f"  Checkpoint saved: {checkpoint_path}")
     
