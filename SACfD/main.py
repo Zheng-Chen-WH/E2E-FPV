@@ -10,6 +10,7 @@ import time
 from utils import map_value
 import math
 import os
+import torch
 
 # 超参数字典
 args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True)
@@ -37,6 +38,9 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
     'LOAD PARA': False, #是否读取参数
+    'USE_PRETRAINED_VISION': True,  # 是否使用预训练的ResNet+GRU模型
+    'PRETRAINED_CHECKPOINT_PATH': 'pretrain_results/aux_model_6000_mpc.pt',  # 预训练模型路径
+    'FREEZE_VISION_EPOCHS': 20,  # 在前N个epoch冻结预训练的视觉编码器（0表示不冻结）
     'task':'Train', # 测试或训练或画图，Train,Test,Plot
     'activation':nn.ReLU, #激活函数类型
     'plot_type':'2D-2line', #'3D-1line'为三维图，一条曲线；'2D-2line'为二维图，两条曲线
@@ -44,8 +48,8 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'evaluate_freq':cfg.EVAL_FREQ, #训练过程中每多少个epoch之后进行测试
     'seed':20000323, #网络初始化的时候用的随机数种子  
-    'max_epoch':1000000,
-    'logs':False, #是否留存训练参数供tensorboard分析 
+    'max_epoch':30000,
+    'logs':True, #是否留存训练参数供tensorboard分析 
     'embedding_dim':128,
     'num_frames':4,
     'door_frames':cfg.door_frames_names,
@@ -112,6 +116,49 @@ env_params={'DT':cfg.DT,
 airsim_environment = env(env_params)
 # Agent
 agent = SAC(args)
+
+# 加载预训练的ResNet+GRU权重
+vision_frozen = False  # 标志位，跟踪视觉编码器是否被冻结
+if args['USE_PRETRAINED_VISION']:
+    print("="*60)
+    print("LOADING PRETRAINED VISION ENCODER")
+    print("="*60)
+    try:
+        from pretrain_aux import load_pretrained_weights_to_policy
+        checkpoint_path = args['PRETRAINED_CHECKPOINT_PATH']
+        print(f"Loading from: {checkpoint_path}")
+        
+        agent.policy = load_pretrained_weights_to_policy(
+            agent.policy,
+            checkpoint_path,
+            cfg.device
+        )
+        
+        print("✓ Successfully loaded pretrained ResNet+GRU weights!")
+        print("  - ResNet auxiliary head: position (3D) + rotation (6D)")
+        print("  - GRU auxiliary head: velocity (3D) + angular velocity (3D)")
+        
+        # 如果设置了冻结epoch数，则冻结视觉编码器
+        if args['FREEZE_VISION_EPOCHS'] > 0:
+            for param in agent.policy.GRU.parameters():
+                param.requires_grad = False
+            vision_frozen = True
+            print(f"  ⚠ Vision encoder FROZEN for first {args['FREEZE_VISION_EPOCHS']} episodes")
+            print("    (Only policy MLP will be trained initially)")
+        
+        print("="*60)
+    except FileNotFoundError:
+        print("✗ Pretrained checkpoint not found. Starting with random weights.")
+        print(f"  Expected path: {checkpoint_path}")
+        print("  Set USE_PRETRAINED_VISION=False or run pretrain_aux.py first.")
+        print("="*60)
+    except Exception as e:
+        print(f"✗ Error loading pretrained weights: {e}")
+        print("  Continuing with random initialization...")
+        print("="*60)
+else:
+    print("Skipping pretrained vision encoder (USE_PRETRAINED_VISION=False)")
+
 MPC_agent = CEM_MPC(cem_hyperparams, mpc_params)
 time_start=time.time()
 #Tensorboard
@@ -140,7 +187,13 @@ recent_memory = DAggerMemory(args['recent_buffer_size']) # 把recent加回来
 if args['task']=='Train':
     if args['logs']==True:
         from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter('./runs/')
+        from datetime import datetime
+        # 创建带描述性名称的子目录来组织实验
+        experiment_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_dir = f'runs/{experiment_name}'
+        writer = SummaryWriter(log_dir)
+        print(f"TensorBoard logs saved to: {log_dir}")
+        print(f"View with: tensorboard --logdir=runs")
     # Training Loop
     updates = 0
     best_avg_reward = -900
@@ -218,10 +271,19 @@ if args['task']=='Train':
                 if info:
                     success=True
                 break
-        if args['logs']==True:
-            writer.add_scalar('reward/train', episode_reward, i_episode)
+        # MPC数据收集阶段不记录reward（这不是NN的表现）
         print(f"----------------------Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------") #, loss{policy_loss}")
         # round(episode_reward,2) 对episode_reward进行四舍五入，并保留两位小数
+
+        # 检查是否需要解冻视觉编码器（只在达到指定epoch时执行一次）
+        if vision_frozen and i_episode == args['FREEZE_VISION_EPOCHS']:
+            for param in agent.policy.GRU.parameters():
+                param.requires_grad = True
+            vision_frozen = False
+            print("="*60)
+            print(f"✓ UNFROZE vision encoder at episode {i_episode}")
+            print("  Vision encoder will now be trained along with policy")
+            print("="*60)
 
         '''DAgger环节，智能体关闭eval模式进行探索'''
         if i_episode % args['evaluate_freq'] == 0:
@@ -241,16 +303,18 @@ if args['task']=='Train':
                     NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
                     MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
                     scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], args['min_action'], args['max_action'])
-                    print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
+                    # print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
                     rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
                     next_drone_state, next_img_tensor, next_Q_state,\
                         reward, done, phase_idx, info, elapsed_time,\
                         relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
                     if len(expert_memory) > args['batch_size'] * 5 and len(exploration_memory) > args['batch_size'] * 5:
+                        # update the model every step?? too little new data is put into the buffer.
+                        # it may work so just keep it this way.
                         # Number of updates per step in environment 每次交互之后可以进行多次训练
                         for i in range(args['updates_per_episode']):
                             # Update parameters of all the networks
-                            policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)
+                            policy_loss, rl_loss, il_loss, ent_loss, alpha, aux_loss = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)
                             # if policy_loss < min_loss:
                             #     min_loss = policy_loss
                             #     model_name = f'master_{k}_{avg_reward}'
@@ -258,6 +322,7 @@ if args['task']=='Train':
                             #     # memory.save_buffer('buffer')
                             if args['logs']==True:
                                 writer.add_scalar('loss/policy', policy_loss, updates)
+                                writer.add_scalar('loss/auxiliary', aux_loss, updates)
                                 # print(policy_loss)
                                 writer.add_scalar('loss/entropy_loss', ent_loss, updates)
                                 writer.add_scalar('entropy_temprature/alpha', alpha, updates)
@@ -284,10 +349,13 @@ if args['task']=='Train':
                         #     k += 1
                         break
                 print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
-
-        if i_episode % (args['evaluate_freq'] * 5) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 5轮mpc+dagger之后进行一轮测试
+            # 记录DAgger阶段的reward（NN控制+MPC标签）
+            if args['logs']==True:
+                writer.add_scalar('reward/dagger', episode_reward, i_episode)
+                
+        if i_episode % (args['evaluate_freq'] * 20) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 20轮mpc+dagger之后进行一轮测试
             avg_reward = 0.
-            episodes = args['evaluate_freq'] * 5
+            episodes = args['evaluate_freq'] * 5  # 每次测试运行5个episode来评估性能
             done_num=0
             avg_step = 0
             for _ in range(episodes):
@@ -336,22 +404,45 @@ if args['task']=='Train':
             agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
-        # if len(memory) == args['replay_size']: # 生成数据集
-            # memory.save_buffer("master")
-            print("训练结束，{}次仍未完成训练".format(args['max_epoch']))
-            # env.plot(args, steps_list, episode_reward_list, avg_reward_list)
-            # if args['logs']==True:
-            #     writer.close()
+            # 训练结束，显示总结信息
+            time_end = time.time()
+            total_training_time = time_end - time_start
+            
+            print("\n" + "="*60)
+            print("TRAINING COMPLETED")
+            print("="*60)
+            print(f"Total Episodes: {i_episode}")
+            print(f"Total Training Time: {round(total_training_time/3600, 2)} hours ({round(total_training_time, 2)} seconds)")
+            print(f"Average Time per Episode: {round(total_training_time/i_episode, 2)} seconds")
+            print(f"Best Average Reward: {round(best_avg_reward, 4)}")
+            print(f"Expert Memory Size: {len(expert_memory)}")
+            print(f"Exploration Memory Size: {len(exploration_memory)}")
+            print(f"DAgger Memory Size: {len(dagger_memory)}")
+            print(f"Total Updates: {updates}")
+            print("="*60)
+            
+            # 关闭 TensorBoard writer
+            if args['logs']:
+                writer.close()
+                print("TensorBoard logs saved to 'runs/' directory")
+                print("="*60)
+            
             break
 
 if args['task']=='Test':
-    name='master_60_82.17_0.1509_39.12_model'
+    name='master_now_best_model'
 
+    print("="*60)
+    print("TESTING MODE")
+    print("="*60)
+    print(f"Loading model: {name}")
     agent.load_model(name.replace('_model', ''))
+    print("Model loaded successfully!")
     time_start = time.time()
     episodes = 100
     done_num = 0
     avg_reward = 0
+    print(f"\nStarting {episodes} test episodes...")
     # model_directory = args['MODEL_DIRECTORY']
     # log_file = args['LOG_FILE']
     for iii in range(episodes):
@@ -390,10 +481,17 @@ if args['task']=='Test':
                 #     agent.save_model(model_name)
                 #     k += 1
                 break
-        # print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
+        print(f"Episode {iii+1}/{episodes}: reward={round(episode_reward, 2)}, steps={episode_steps}, success={success}")
     avg_reward = avg_reward / episodes
     #writer.add_scalar('avg_reward/test', avg_reward, i_episode)
     time_end=time.time()
-    print("----------------------------------------")
-    print(f"Model:{name}, Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 4)},done num:{done_num}")
-    print("----------------------------------------")
+    print("-"*60)
+    print("TESTING COMPLETED")
+    print("="*60)
+    print(f"Model: {name}")
+    print(f"Test Episodes: {episodes}")
+    print(f"Average Reward: {round(avg_reward, 4)}")
+    print(f"Success Rate: {done_num}/{episodes} ({round(100*done_num/episodes, 2)}%)")
+    print(f"Total Test Time: {round(time_end - time_start, 2)} seconds")
+    print(f"Average Time per Episode: {round((time_end - time_start)/episodes, 2)} seconds")
+    print("="*60)

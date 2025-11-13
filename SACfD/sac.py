@@ -342,7 +342,7 @@ class SAC(object):
             soft_update(self.critic_target, self.critic, self.tau)
         # print(f"td_error:{norm_td}, norm_dis:{norm_dis}")
         print(f"RL weight:{w_rl}, Q:{qf_loss}, RL:{w_rl * rl_policy_loss_component}, IL:{(1 - w_rl) * il_policy_loss_component * self.dagger_weight}, aux:{self.aux_loss_weight * aux_loss}")
-        return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item()
+        return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item(), aux_loss.item()
 
     # Save model parameters
     def save_model(self, filename="master"):

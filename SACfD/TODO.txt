@@ -1,0 +1,6 @@
+Completed:
+run pretrain_aux.py with mpc expert
+
+Todo:
+run pretrain_aux.py with policy model and random
+run main.py w/o vision pretrain and compare aux/overall loss
