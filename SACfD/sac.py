@@ -345,17 +345,29 @@ class SAC(object):
         return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item(), aux_loss.item()
 
     # Save model parameters
-    def save_model(self, filename="master"):
+    def save_model(self, filename="master", training_state=None):
         '''if not os.path.exists('GoodModel/'):
             os.makedirs('GoodModel/')'''
 
         ckpt_path = filename + "_model.pt"
         print('Saving models to {}'.format(ckpt_path))
-        torch.save({'policy_state_dict': self.policy.state_dict(),
-                    'critic_state_dict': self.critic.state_dict(),
-                    'critic_target_state_dict': self.critic_target.state_dict(),
-                    'critic_optimizer_state_dict': self.critic_optim.state_dict(),
-                    'policy_optimizer_state_dict': self.policy_optim.state_dict()}, ckpt_path)
+        
+        checkpoint = {
+            'policy_state_dict': self.policy.state_dict(),
+            'critic_state_dict': self.critic.state_dict(),
+            'critic_target_state_dict': self.critic_target.state_dict(),
+            'critic_optimizer_state_dict': self.critic_optim.state_dict(),
+            'policy_optimizer_state_dict': self.policy_optim.state_dict()
+        }
+        
+        # 如果提供了训练状态，一并保存
+        if training_state is not None:
+            checkpoint.update(training_state)
+            print(f"  Saved training state: episode={training_state.get('episode', 'N/A')}, "
+                  f"updates={training_state.get('updates', 'N/A')}, "
+                  f"best_reward={training_state.get('best_avg_reward', 'N/A')}")
+        
+        torch.save(checkpoint, ckpt_path)
 
     # Load model parameters
     def load_model(self, file_name, evaluate=False):
@@ -366,6 +378,15 @@ class SAC(object):
             self.critic_target.load_state_dict(checkpoint['critic_target_state_dict'])
             self.critic_optim.load_state_dict(checkpoint['critic_optimizer_state_dict'])
             self.policy_optim.load_state_dict(checkpoint['policy_optimizer_state_dict'])
+            
+            # 返回训练状态（如果存在）
+            training_state = {
+                'episode': checkpoint.get('episode', None),
+                'updates': checkpoint.get('updates', None),
+                'best_avg_reward': checkpoint.get('best_avg_reward', None),
+                'k': checkpoint.get('k', None)
+            }
+            
             if evaluate:
                 self.policy.eval()
                 self.critic.eval()
@@ -374,3 +395,5 @@ class SAC(object):
                 self.policy.train()
                 self.critic.train()
                 self.critic_target.train()
+            
+            return training_state

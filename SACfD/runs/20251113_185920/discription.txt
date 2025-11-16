@@ -1,0 +1,2 @@
+continue old training process without pretrain model
+bad results

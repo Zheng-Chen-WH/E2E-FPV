@@ -37,7 +37,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': False, #是否读取参数
+    'LOAD PARA': False, #是否读取参数, full model params
     'USE_PRETRAINED_VISION': True,  # 是否使用预训练的ResNet+GRU模型
     'PRETRAINED_CHECKPOINT_PATH': 'pretrain_results/aux_model_6000_mpc.pt',  # 预训练模型路径
     'FREEZE_VISION_EPOCHS': 20,  # 在前N个epoch冻结预训练的视觉编码器（0表示不冻结）
@@ -117,9 +117,17 @@ airsim_environment = env(env_params)
 # Agent
 agent = SAC(args)
 
-# 加载预训练的ResNet+GRU权重
+# 加载预训练的ResNet+GRU权重 (仅在不加载checkpoint时使用)
 vision_frozen = False  # 标志位，跟踪视觉编码器是否被冻结
-if args['USE_PRETRAINED_VISION']:
+if args['LOAD PARA'] == True:
+    # 如果要从checkpoint恢复训练，跳过pretrained weights加载
+    # 因为checkpoint中已经包含了训练过程中进化的完整policy权重
+    print("="*60)
+    print("CHECKPOINT MODE: Skipping pretrained vision encoder")
+    print("(Checkpoint contains full trained policy weights)")
+    print("="*60)
+elif args['USE_PRETRAINED_VISION']:
+    # 仅在新训练开始时加载pretrained vision encoder
     print("="*60)
     print("LOADING PRETRAINED VISION ENCODER")
     print("="*60)
@@ -157,7 +165,9 @@ if args['USE_PRETRAINED_VISION']:
         print("  Continuing with random initialization...")
         print("="*60)
 else:
-    print("Skipping pretrained vision encoder (USE_PRETRAINED_VISION=False)")
+    print("="*60)
+    print("Starting with random initialization (no pretrained weights)")
+    print("="*60)
 
 MPC_agent = CEM_MPC(cem_hyperparams, mpc_params)
 time_start=time.time()
@@ -203,11 +213,35 @@ if args['task']=='Train':
     avg_reward_list = []
     k = 0
     min_loss = 100
+    start_episode = 1  # 起始episode编号
+    
     if args['LOAD PARA']==True:
-        agent.load_model("best_master", evaluate=False)
+        print("="*60)
+        print("LOADING CHECKPOINT")
+        print("="*60)
+        training_state = agent.load_model("master_now_best", evaluate=False)
+        
+        # 恢复训练状态
+        if training_state['episode'] is not None:
+            start_episode = training_state['episode'] + 1
+            print(f"✓ Restored episode counter: resuming from episode {start_episode}")
+        
+        if training_state['updates'] is not None:
+            updates = training_state['updates']
+            print(f"✓ Restored updates counter: {updates}")
+        
+        if training_state['best_avg_reward'] is not None:
+            best_avg_reward = training_state['best_avg_reward']
+            print(f"✓ Restored best average reward: {round(best_avg_reward, 4)}")
+        
+        if training_state['k'] is not None:
+            k = training_state['k']
+            print(f"✓ Restored model counter: {k}")
+        
+        print("="*60)
         # memory.load_buffer("master")
         
-    for i_episode in itertools.count(1): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从1开始，每次递增1。
+    for i_episode in itertools.count(start_episode): #从start_episode开始计数
         success=False
         episode_reward = 0
         done=False
@@ -321,11 +355,11 @@ if args['task']=='Train':
                             #     agent.save_model(model_name)
                             #     # memory.save_buffer('buffer')
                             if args['logs']==True:
-                                writer.add_scalar('loss/policy', policy_loss, updates)
-                                writer.add_scalar('loss/auxiliary', aux_loss, updates)
+                                writer.add_scalar('loss/policy_loss', policy_loss, updates)
+                                writer.add_scalar('loss/aux_loss', aux_loss, updates)
                                 # print(policy_loss)
-                                writer.add_scalar('loss/entropy_loss', ent_loss, updates)
-                                writer.add_scalar('entropy_temprature/alpha', alpha, updates)
+                                writer.add_scalar('loss/ent_loss', ent_loss, updates)
+                                writer.add_scalar('ent/entropy_temprature', alpha, updates)
                             updates += 1
                     if math.fabs(scaled_MPC_action[0]) < 10 and scaled_MPC_action[0] > 0:    
                         dagger_memory.push(img_tensor, scaled_MPC_action, final_pi_target, 
@@ -351,7 +385,7 @@ if args['task']=='Train':
                 print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
             # 记录DAgger阶段的reward（NN控制+MPC标签）
             if args['logs']==True:
-                writer.add_scalar('reward/dagger', episode_reward, i_episode)
+                writer.add_scalar('loss/episode_reward', episode_reward, i_episode)
                 
         if i_episode % (args['evaluate_freq'] * 20) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 20轮mpc+dagger之后进行一轮测试
             avg_reward = 0.
@@ -389,12 +423,26 @@ if args['task']=='Train':
             avg_reward /= episodes
             avg_step /= episodes
             if args['logs']==True:
-                writer.add_scalar('avg_reward/test', avg_reward, i_episode)
+                writer.add_scalar('loss/test_avg_reward', avg_reward, i_episode)
             if avg_reward >= best_avg_reward and avg_reward >= 0.0:
                 best_avg_reward = avg_reward
-                agent.save_model("best_master")
-            model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
-            agent.save_model(model_name)
+                # 保存最佳模型时包含训练状态
+                training_state = {
+                    'episode': i_episode,
+                    'updates': updates,
+                    'best_avg_reward': best_avg_reward,
+                    'k': k
+                }
+                agent.save_model("train_model/"+experiment_name+"/best_master", training_state=training_state)
+            # 保存定期检查点时也包含训练状态
+            training_state = {
+                'episode': i_episode,
+                'updates': updates,
+                'best_avg_reward': best_avg_reward,
+                'k': k
+            }
+            model_name = f'train_model/{experiment_name}/master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
+            agent.save_model(model_name, training_state=training_state)
             k += 1
             print("----------------------------------------")
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
