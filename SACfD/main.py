@@ -126,8 +126,9 @@ if args['task']=='Train':
                 for i in range(args['updates_per_episode']):
                     # Update parameters of all the networks
                     '''policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)'''
-                    policy_loss, qf_loss, rl_loss, il_loss, aux_loss = agent.update(updates)
-                    if args['logs']==True:
+                    loss_results = agent.update(updates)
+                    policy_loss, qf_loss, rl_loss, il_loss, aux_loss = loss_results
+                    if args['logs'] == True and loss_results is not None:
                         writer.add_scalar('loss/policy', policy_loss, updates)
                         writer.add_scalar('loss/qf_loss', qf_loss, updates)
                         writer.add_scalar('loss/rl_loss', rl_loss, updates)
