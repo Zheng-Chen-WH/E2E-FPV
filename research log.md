@@ -400,6 +400,7 @@
 ## 11.14 --by cz
 + 重构了参数传入和model构建，现在在config.py修改参数就能改变底层模型架构
 + 加入了自定义ViT，可选为第一模块
++ 加入了自定义temporal transformer，可选为第二模块
 + 给ResNet和ViT都加入了时间编码功能，兼容可能的transformer架构第二模块
 + memory也转为参数可在参数定义文件自定义结构的方式，并且在sac.py内部进行定义（之前在main.py）
 + memory现在只包含expert和exploration两部分，使用时：
@@ -424,3 +425,6 @@
   1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
   2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
 + 停用0-10的动作范围，改为-5~5
+
+## xx.xx --cz
++ 后续修改计划：加上PPO作为可选算法

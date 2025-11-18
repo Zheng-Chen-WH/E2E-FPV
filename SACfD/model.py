@@ -279,8 +279,8 @@ class VisionTransformer(nn.Module):
             norm_first = args["norm_first"]   # Pre-Layer Normalization，在自注意力层和FFN之前进行层归一化，能更稳定一些
         )
 
-        # 堆叠三层transformer
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers= args["depth"])
+        # 堆叠n层transformer
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers = args["depth"])
 
         # 最后做一层归一化
         self.norm = nn.LayerNorm(args["embed_dim"])
@@ -345,6 +345,92 @@ class VisionTransformer(nn.Module):
         main_features_with_time_pos = main_features + time_pos_embed
 
         return main_features, main_features_with_time_pos, aux_output
+
+class TemporalTransformer(nn.Module):
+    """
+    一个用于处理帧序列特征的Transformer，提取动态信息。
+    输入: ViT处理后的帧特征序列，形状为 (B, T, D)。
+    输出: 
+        - main_output: 输出特征向量。
+        - aux_output_dynamics: 辅助任务输出，相对速度、角速度6D信息。
+    """
+    def __init__(self, args):
+        super().__init__()
+        self.embed_dim = args["embed_dim"]
+
+        # 定义摘要Token，用于汇总整个时间序列的信息，生成最终的控制决策
+        self.summary_token = nn.Parameter(torch.zeros(1, 1, args["embed_dim"]))
+
+        # 时间位置编码已经在ViT的输出中被添加，不需要重复添加
+        # 仍然需要一个Transformer Encoder来处理这个序列
+        
+        # 时间Transformer编码器层
+        temporal_encoder_layer = nn.TransformerEncoderLayer(
+            d_model = args["embed_dim"],
+            nhead = args["num_heads"],
+            dim_feedforward = int(args["embed_dim"] * args["mlp_ratio"]),
+            dropout = args["dropout"],
+            activation = args["activation"],
+            batch_first = args["batch_first"],
+            norm_first = args["norm_first"]
+        )
+
+
+        self.input_projection = nn.Linear(args["input_dim"], args["embed_dim"])
+
+        # 时间Transformer编码器主体
+        self.temporal_transformer_encoder = nn.TransformerEncoder(
+            temporal_encoder_layer, 
+            num_layers = args["depth"]
+        )
+
+        self.norm = nn.LayerNorm(args["embed_dim"])
+
+        # 定义辅助输出头，用于预测6D动态信息（相对速度+角速度）
+        self.aux_head_dynamics = nn.Sequential(
+            nn.Linear(args["embed_dim"], 128),
+            nn.ReLU(),
+            nn.Linear(128, args["num_aux_outputs"]) # 输出辅助头维度个值
+        )
+
+    def forward(self, input, x, hidden_state=None):
+        # 输入x的形状: (B, T, D)，即ViT输出的 main_features_with_time_pos
+        B = x.shape[0]
+        # 维度对齐
+        x = self.input_projection(x)
+        # 在序列的开头拼接上summary Token
+        '''
+        ViT中：
+            为了高效并行处理多张图片，将B和T两个维度展平，伪装成一个更大的批次；
+            B*T 个独立的样本的每一张都需要一个 [CLS] Token来汇总自己的空间信息
+            ViT 的自注意力是在一张图片内部的patches之间进行的，目的是理解空间关系。不同帧的patches之间在此阶段完全没有交互
+        Temporal Transformer中：
+            目标为理解T帧特征之间的动态关系，并将整个序列的动态信息融合成一个单一的特征向量
+            T不是批次的一部分，而是要处理的序列长度。这正是TransformerEncoder (当 batch_first=True 时) 所期望的输入格式。
+            由于目标是为长度为T的序列生成单一摘要。因此只需要为每个batch里的样本在开头附加一个 summary_token
+            TemporalTransformer的自注意力是在一个序列内部的T个帧之间进行的，目的是理解时间关系
+        '''
+        summary_tokens = self.summary_token.expand(B, -1, -1)
+        x = torch.cat((summary_tokens, x), dim=1) # Shape: (B, T+1, D)
+
+        # 将拼接后的序列送入时间Transformer编码器
+        x = self.temporal_transformer_encoder(x)
+
+        # 应用层归一化
+        x = self.norm(x)
+
+        # 提取不同部分的输出
+        summary_token_output = x[:, 0, :]      # (B, D) -> 用于最终决策
+        frame_tokens_output = x[:, 1:, :]    # (B, T, D) -> 包含了上下文信息的每帧特征
+
+        # 计算主输出
+        main_output = summary_token_output
+
+        # 计算辅助输出 (6D动态信息)
+        # avg_frame_features = frame_tokens_output.mean(dim=1) # Shape: (B, D)
+        aux_output_dynamics = self.aux_head_dynamics(frame_tokens_output)
+
+        return main_output, aux_output_dynamics, None
 
 class GRU(nn.Module):
     """
@@ -449,7 +535,8 @@ def mlp(sizes, activation, output_activation=nn.Identity):
 class GaussianPolicy(nn.Module):
     def __init__(self, args):
         super(GaussianPolicy, self).__init__()
-
+        
+        # 定义第一模块
         if args['first_module'] == "ResNet":
             # ResNet逐帧提取特征
             self.image_feature_extractor = ResNet(args['ResNet'])
@@ -457,8 +544,12 @@ class GaussianPolicy(nn.Module):
             # Transformer逐帧提取特征
             self.image_feature_extractor = VisionTransformer(args['ViT'])
 
+        # 定义第二模块
         if args['second_module'] == "GRU":
             self.dynamic_feature_extractor = GRU(args['GRU'])
+        elif args['second_module'] == "TempT":
+            self.dynamic_feature_extractor = TemporalTransformer(args["TemporalTransformer"])
+        
 
         MLP_dict = args['MLP']
         # 在拼接后、MLP前加入归一化层LayerNorm

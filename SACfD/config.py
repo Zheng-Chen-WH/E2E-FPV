@@ -130,7 +130,7 @@ second_output_dim = 128 # 第二模块（GRU）输出主向量维度
 second_aux_dim = 6 # 第二模块辅助头输出维度，相对下一目标的速度+3D角速度 
 actor_param = {"action_dim": ACTION_DIM, # 动作网络输出：4个PWM
                "first_module": "ViT", # 第一模块类型，ResNet/ViT
-               "second_module": "GRU", # 第二模块类型，GRU
+               "second_module": "TempT", # 第二模块类型，GRU/TempT
                "first_aux_dim": first_aux_dim, 
                "second_aux_dim": second_aux_dim,
                "scaled_max_action": SCALED_CONTROL_MAX, # 缩放后动作上限值
@@ -163,14 +163,6 @@ actor_param = {"action_dim": ACTION_DIM, # 动作网络输出：4个PWM
                     "num_aux_output": first_aux_dim, # 第一层辅助头
                     "embed_dim": first_output_dim, # 输出特征向量维度
                     },
-               "GRU":{ # GRU网络参数
-                    "input_dim": first_output_dim, # 第一模块输出是第二模块输入
-                    "gru_hidden_dim": second_output_dim, # GRU主输出向量维度    
-                    "aux_out_dim": second_aux_dim, # GRU辅助输出维度
-                    "layer_num": 2, # GRU层数
-                    "batch_first": True, # default = True, 指定输入和输出张量的维度顺序为 (batch, seq_len, features)
-                    "drop_out": 0.3, # dropout概率
-                    },
                 "ViT":{ # ViT参数
                     "img_size": (256, 144), # 输入图像尺寸
                     "frames": sequence_len, # 帧数
@@ -179,6 +171,26 @@ actor_param = {"action_dim": ACTION_DIM, # 动作网络输出：4个PWM
                     "num_aux_outputs": first_aux_dim, # 辅助输出头维度
                     "embed_dim": first_output_dim, # 
                     "depth": 3, # ViT中transformer层数
+                    "num_heads": 8, # 注意力头数
+                    "mlp_ratio": 4.0,  # FFN隐藏层大小比例因数，hidden_dimension = embed_dim * mlp_ratio
+                    "dropout": 0.1, # dropout比例
+                    "activation": 'relu', # 激活函数，或者gelu
+                    "batch_first": True, # 设定输入和输出张量的维度顺序为(Batch, Seq, Dim)
+                    "norm_first": True, # Pre-Layer Normalization，在自注意力层和FFN之前进行层归一化，能更稳定一些
+                    },
+               "GRU":{ # GRU网络参数
+                    "input_dim": first_output_dim, # 第一模块输出是第二模块输入
+                    "gru_hidden_dim": second_output_dim, # GRU主输出向量维度    
+                    "aux_out_dim": second_aux_dim, # GRU辅助输出维度
+                    "layer_num": 2, # GRU层数
+                    "batch_first": True, # default = True, 指定输入和输出张量的维度顺序为 (batch, seq_len, features)
+                    "drop_out": 0.3, # dropout概率
+                    },
+                "TemporalTransformer":{ # 时序transformer参数，具有一个线性层将input_dim对齐到output_dim
+                    "input_dim": first_output_dim,
+                    "num_aux_outputs": second_aux_dim, # 辅助输出头维度
+                    "embed_dim": second_output_dim,
+                    "depth": 3, # transformer层数
                     "num_heads": 8, # 注意力头数
                     "mlp_ratio": 4.0,  # FFN隐藏层大小比例因数，hidden_dimension = embed_dim * mlp_ratio
                     "dropout": 0.1, # dropout比例

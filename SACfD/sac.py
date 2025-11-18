@@ -147,7 +147,8 @@ class SAC(object):
         return total_loss
 
     def select_action(self, img_sequence, state, evaluate=False):
-        """输入图片序列与目标位置，返回动作
+        """输入图片序列与目标位置，返回动作；仅用在main.py前向传播中，训练时直接用sample函数
+        所以训练时自然而然就有hidden_state总为none
 
         Args:
             img_sequence (_type_): 图片序列张量
@@ -163,8 +164,9 @@ class SAC(object):
             action, _, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state)
         else:
             _, _, action, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
-        # 更新Agent的隐藏状态，为下一次决策做准备
-        self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
+        # 如果使用GRU，更新Agent的隐藏状态，为下一次决策做准备
+        if new_hidden is not None:
+            self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
         return action.detach().cpu().numpy()[0]
 
     def push_data(self, source, data):
