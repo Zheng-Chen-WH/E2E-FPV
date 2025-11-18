@@ -9,6 +9,42 @@ LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
 epsilon = 1e-6
 
+def init_weights(m):
+    """
+    根据模块类型应用Kaiming, Orthogonal等最佳实践的权重初始化。
+    使用方法: model.apply(init_weights)
+    """
+    if isinstance(m, nn.Conv2d):
+        # Kaiming 正态分布初始化，专为ReLU设计
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            # 偏置通常初始化为0
+            nn.init.constant_(m.bias, 0)
+            
+    elif isinstance(m, (nn.BatchNorm2d, nn.LayerNorm)):
+        # BN层的gamma初始化为1, beta初始化为0
+        nn.init.constant_(m.weight, 1)
+        nn.init.constant_(m.bias, 0)
+        
+    elif isinstance(m, nn.GRU):
+        for name, param in m.named_parameters():
+            if 'weight_ih' in name:
+                # 输入到隐藏层的权重，使用Xavier均匀分布
+                nn.init.xavier_uniform_(param.data)
+            elif 'weight_hh' in name:
+                # 隐藏层到隐藏层的权重，使用正交初始化
+                nn.init.orthogonal_(param.data)
+            elif 'bias' in name:
+                # 偏置初始化为0
+                param.data.fill_(0)
+                
+    elif isinstance(m, nn.Linear):
+        # Kaiming 正态分布初始化
+        # a=0 表示ReLU, mode='fan_in' 保持前向传播时权重的方差
+        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
 class ResidualBlock(nn.Module):
     """定义一个包含两个3*3卷积层的残差块
 
@@ -391,41 +427,6 @@ class GRU(nn.Module):
         
         return final_feature_vector, gru_aux_predictions, last_hidden_state
 
-def init_weights(m):
-    """
-    根据模块类型应用Kaiming, Orthogonal等最佳实践的权重初始化。
-    使用方法: model.apply(init_weights)
-    """
-    if isinstance(m, nn.Conv2d):
-        # Kaiming 正态分布初始化，专为ReLU设计
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-        if m.bias is not None:
-            # 偏置通常初始化为0
-            nn.init.constant_(m.bias, 0)
-            
-    elif isinstance(m, nn.BatchNorm2d, nn.LayerNorm):
-        # BN层的gamma初始化为1, beta初始化为0
-        nn.init.constant_(m.weight, 1)
-        nn.init.constant_(m.bias, 0)
-        
-    elif isinstance(m, nn.GRU):
-        for name, param in m.named_parameters():
-            if 'weight_ih' in name:
-                # 输入到隐藏层的权重，使用Xavier均匀分布
-                nn.init.xavier_uniform_(param.data)
-            elif 'weight_hh' in name:
-                # 隐藏层到隐藏层的权重，使用正交初始化
-                nn.init.orthogonal_(param.data)
-            elif 'bias' in name:
-                # 偏置初始化为0
-                param.data.fill_(0)
-                
-    elif isinstance(m, nn.Linear):
-        # Kaiming 正态分布初始化
-        # a=0 表示ReLU, mode='fan_in' 保持前向传播时权重的方差
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in', nonlinearity='relu')
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0)
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     '''

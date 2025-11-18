@@ -423,4 +423,4 @@
 + 修改了冗长的main.py；主要修改包括：
   1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
   2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
-+ 停用0-10的范围，改为-5~5
++ 停用0-10的动作范围，改为-5~5

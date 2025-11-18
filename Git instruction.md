@@ -194,3 +194,50 @@ touch .gitignore
 # 忽略所有名为 __pycache__ 的文件夹
 __pycache__/ 
 ```
+
+## 9. 多branch协作
+
++ 查看你的分支情况
+```
+# 查看所有本地分支（当前分支前有 * 号）
+git branch
+
+# 查看所有远程分支
+git branch -r
+
+# 查看当前状态和所在分支
+git status
+```
+
++ 把当前分支推送到远程的 cz 分支
+```
+# 如果远程不存在 cz 分支，Git 会自动创建
+git push github HEAD:cz
+```
++ 创建一个新的本地分支 cz 并推送
+```
+# 创建并切换到 cz 分支（基于当前分支）
+git checkout -b cz
+
+# 推送到远程
+git push github cz
+```
++ 创建并切换到本地 cz 分支       
+git fetch会下载远程的更新，并存储在远程跟踪分支（如 github/cz）中，但不会自动合并到工作目录
+```
+git fetch github # 更新远程信息
+git checkout --track github/cz
+```
+
++ 本地在master下存在不需要的修改，阻碍了切换分支：
+```
+# 把当前修改"藏起来"
+git stash
+
+# 切换分支
+git checkout cz
+
+# 在 cz 分支上恢复刚才的修改（如果需要）
+git stash pop
+# 如果不想恢复这些修改，直接 git stash drop 丢弃即可。
+```
