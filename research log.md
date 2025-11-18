@@ -394,7 +394,10 @@
   + 考虑PPO，收集足够多数据之后固定次数反复训练，不再off-policy
   + 对图像进行经典CV预处理？
 
-## 11.14
+## 10.26 --by zzy
++ add ResNet+GRU pretrain: pretrain_aux.py, example_load_pretrained.py
+
+## 11.14 --by cz
 + 重构了参数传入和model构建，现在在config.py修改参数就能改变底层模型架构
 + 加入了自定义ViT，可选为第一模块
 + 给ResNet和ViT都加入了时间编码功能，兼容可能的transformer架构第二模块
@@ -421,4 +424,3 @@
   1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
   2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
 + 停用0-10的范围，改为-5~5
-        
