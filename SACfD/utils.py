@@ -158,4 +158,40 @@ def six_d_to_rot_mat(pred_6d):
         b2 = F.normalize(a2_orthogonal, dim=-1)
         b3 = torch.cross(b1, b2, dim=-1)
         return torch.stack([b1, b2, b3], dim=-1)
+
+def build_sincos_pos_embed(num_positions: int, embed_dim: int):
+    """
+    为Transformer生成基于sin/cos函数的位置编码表。
+    Args:
+        num_positions (int): 序列的长度 (在ViT中等于 num_patches + 1)。
+        embed_dim (int): 嵌入向量的维度 (d_model)。
+
+    Returns:
+        torch.Tensor: 位置编码张量，形状为 (1, num_positions, embed_dim)。
+    """
+    
+    # 初始化一个位置编码矩阵
+    pe = torch.zeros(num_positions, embed_dim)
+
+    # 创建一个位置索引的列向量 [0, 1, ..., num_positions-1]
+    position = torch.arange(0, num_positions, dtype=torch.float).unsqueeze(1)
+
+    # 创建一个用于计算分母的项
+    # div_term = 1 / (10000^(2i / d_model))
+    # 使用exp和log可以获得更好的数值稳定性
+    # torch.arange(0, embed_dim, 2)生成一个包含所有从0开始直到embed_dim的偶数的序列，因为原公式中是用2i和2i+1所以这里只需要128个数
+    div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-math.log(10000.0) / embed_dim))
+
+    # 计算偶数维度的位置编码 (使用sin)
+    # 对于位置编码矩阵pe的所有行，取出所有偶数列（0, 2, 4, ...），用 sin 函数和我们计算好的div_term来填充它们。
+    pe[:, 0::2] = torch.sin(position * div_term)
+
+    # 计算奇数维度的位置编码 (使用cos)
+    # 对于位置编码矩阵pe的所有行，取出所有奇数列（1, 3, 5, ...），用 cos 函数和div_term来填充它们。
+    pe[:, 1::2] = torch.cos(position * div_term)
+    
+    # 增加一个batch维度以匹配输入格式 (1, num_positions, embed_dim)
+    pe = pe.unsqueeze(0)
+    
+    return pe
    

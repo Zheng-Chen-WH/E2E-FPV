@@ -7,88 +7,88 @@ from model import GaussianPolicy, QNetwork, init_weights
 import torch.nn as nn
 import time
 import numpy as np
+from replay_memory import ReplayMemory
 
 class SAC(object):
     def __init__(self, args):
-        self.gamma = args['gamma']
-        self.tau = args['tau']
-        self.alpha = args['alpha']
-        self.seed=args['seed']
-        self.target_update_interval = args['target_update_interval']
-        self.automatic_entropy_tuning = args['automatic_entropy_tuning']
-        self.warm_up_steps = args['warm_up']
-        self.base_lr = args['lr']
-        self.aux_loss_weight = args['aux_loss_weight']
-        self.pos_loss_weight = args['pos_loss_weight']
-        self.rot_loss_weight = args['rot_loss_weight']
-        self.vel_loss_weight = args['vel_loss_weight']
-        self.ang_vel_loss_weight = args['ang_vel_loss_weight']
-        self.dagger_weight = args['dagger_loss_weight']
 
-        self.device = torch.device("cuda" if args['cuda'] else "cpu")
+        # 解包SAC算法参数
+        SAC_dict = args['SAC_param']
+        self.gamma = SAC_dict['gamma']
+        self.tau = SAC_dict['tau']
+        self.alpha = SAC_dict['alpha']
+        self.seed = SAC_dict['seed']
+        self.target_update_interval = SAC_dict['target_update_interval']
+        self.automatic_entropy_tuning = SAC_dict['automatic_entropy_tuning']
+        self.warm_up_steps = SAC_dict['warm_up_steps']
+        self.base_lr = SAC_dict['lr']
+        self.max_norm_grad = SAC_dict['max_norm_grad']
 
-        self.critic = QNetwork(args['Q_network_dim'], args['action_dim'], args['hidden_sizes'], args['activation']).to(self.device)
+        # il与rl损失动态混合机制参数
+        self.loss_dynamic_change_window = SAC_dict['loss_dynamic_change_window']
+        self.rl_loss_weight_target = SAC_dict['rl_loss_weight_target']
+
+        # 解包损失函数权重字典
+        loss_dict = SAC_dict['loss_weight']
+        self.aux_loss_weight = loss_dict['aux_loss_weight']
+        self.pos_loss_weight = loss_dict['pos_loss_weight']
+        self.rot_loss_weight = loss_dict['rot_loss_weight']
+        self.vel_loss_weight = loss_dict['vel_loss_weight']
+        self.ang_vel_loss_weight = loss_dict['ang_vel_loss_weight']
+        self.il_weight = loss_dict['il_loss_weight']
+
+        # 初始化灵活定义版buffer
+        self.memory = ReplayMemory(SAC_dict['buffer_param'])
+        self.training_args = SAC_dict['batch_size']
+
+        # 定义设备
+        self.device = args['device']
+
+        # 定义各网络与初始化
+
+        # 定义并初始化critic
+        self.critic = QNetwork(args['critic_param']).to(self.device)
         self.critic_optim = Adam(self.critic.parameters(), self.base_lr)
-
-        self.critic_target = QNetwork(args['Q_network_dim'], args['action_dim'], args['hidden_sizes'], args['activation']).to(self.device)
+        self.critic_target = QNetwork(args['critic_param']).to(self.device)
         self.critic.apply(init_weights)
-        nn.init.uniform_(self.critic.Q_network_1[-2].weight, -1e-3, 1e-3)
-        nn.init.uniform_(self.critic.Q_network_2[-2].weight, -1e-3, 1e-3)
+        nn.init.uniform_(self.critic.Q_network_1[-2].weight, -3e-3, 3e-3)
+        nn.init.uniform_(self.critic.Q_network_1[-2].bias, -3e-3, 3e-3)
+        nn.init.uniform_(self.critic.Q_network_2[-2].weight, -3e-3, 3e-3)
+        nn.init.uniform_(self.critic.Q_network_2[-2].bias, -3e-3, 3e-3)
         hard_update(self.critic_target, self.critic) #初始化的时候直接硬更新
-        self.critic_target.apply(init_weights)
-        nn.init.uniform_(self.critic_target.Q_network_1[-2].weight, -1e-3, 1e-3)
-        nn.init.uniform_(self.critic_target.Q_network_2[-2].weight, -1e-3, 1e-3)
-
-        # Target Entropy = −dim(A) (e.g. , -6 for HalfCheetah-v2) as given in the paper
-        if self.automatic_entropy_tuning is True: #原论文直接认为目标熵就是动作空间维度乘积的负值，在这里就是Box的“体积”
+        
+        # 定义并初始化alpha自动调整
+        # Target Entropy = −dim(A)，原论文直接认为目标熵就是动作空间维度乘积的负值，在这里就是Box的“体积”
+        if self.automatic_entropy_tuning is True:
             # self.target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(self.device)).item() #torch.prod()是一个函数，用于计算张量中所有元素的乘积
-            self.target_entropy = - args['action_dim'] # 对于一维动作空间向量，目标值就是这个
+            self.target_entropy = - SAC_dict['action_dim'] # 对于一维动作空间向量，目标值就是这个
             self.alpha = torch.zeros(1, requires_grad=True, device=self.device) #原论文没用log，但是这里用的，总之先改成无log状态试试
             #self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device) #初始化log_alpha
             self.alpha_optim = Adam([self.alpha], lr=self.base_lr)
 
-        self.policy = GaussianPolicy(args['embedding_dim'], args['Pi_mlp_dim'], args['action_dim'], args['hidden_sizes'], 
-                                     args['activation'], args['max_action'], args['min_action'],
-                                     args['resnet_aux_dim'], args['gru_aux_dim'],
-                                     args['gru_layer'], args['drop_out']).to(self.device)
+        # 定义并初始化policy
+        self.policy = GaussianPolicy(args['actor_param']).to(self.device)
         self.policy.apply(init_weights)  
         nn.init.constant_(self.policy.log_std_layer.weight, 0)
         nn.init.constant_(self.policy.log_std_layer.bias, 0)
-        nn.init.uniform_(self.policy.mu_layer.weight, -1.0, 1.0) 
-        self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01) # Gemini说transformer适合用
+        nn.init.uniform_(self.policy.mu_layer.weight, - SAC_dict['mu_init_boundary'], SAC_dict['mu_init_boundary']) 
+        nn.init.uniform_(self.policy.mu_layer.bias, - SAC_dict['mu_init_boundary'], SAC_dict['mu_init_boundary'])
+        self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01)
         self.hidden_state = None
-        self.avg_td_error = None
-        self.avg_disagreement = None
-        # 带棘轮效应的动态基线参数
-        self.baseline_update_window = args['baseline_update_window']
-        self.baseline_update_gamma = args['baseline_update_gamma']
-        # 归一化分母（基线），初始化为1.0
-        self.baseline_td = 1.0
-        self.baseline_dis = 1.0
-        
-        # 目标基线，在第一次评估时设定
-        self.target_baseline_td = 1.0
-        self.target_baseline_dis = 1.0
 
-        # 初始化基线下降的每步增量初始化为0
-        self.delta_baseline_td = 0.0
-        self.delta_baseline_dis = 0.0
-
-        # 用于在每个窗口内收集数据
-        self._window_td_errors = []
-        self._window_disagreements = []
-        self._is_initial_baseline_set = False # 标记是否已完成第一次基线设置
-        self.k_final = args['k_final'] 
-        self.k_rl_threshold = args['k_rl_threshold']
-        self.avg_il_loss = None
-
-    def reset(self): # 为了发挥GRU时序能力，现在每次训练前要重置GRU的隐藏状态
+    def reset(self): # 为了发挥GRU时序能力，每次训练前要重置GRU的隐藏状态
         self.hidden_state = None
 
     def six_d_to_rot_mat(self, pred_6d):
-        """
-        将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
-        这个函数不知道也不关心 N 是 B 还是 B*T，它只是独立处理N个样本。
+        """将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
+            
+            这个函数无所谓N 是 B 还是 B*T，它只是独立处理N个样本。
+        
+        Args:
+            pred_6d: (N,6)的6D旋转表示
+        
+        Return:
+            torch.stack([b1, b2, b3], dim=-1) (N,3,3)的旋转矩阵
         """
         # 提取列向量
         a1 = pred_6d[..., 0:3]
@@ -101,18 +101,28 @@ class SAC(object):
         b3 = torch.cross(b1, b2, dim=-1)
         return torch.stack([b1, b2, b3], dim=-1)
     
-    def aux_loss(self, resnet_output, gru_output, gt_pos, gt_rot_mat, gt_vel, gt_ang_vel): # gr:ground truth
-        """
-        从DAgger取数据计算模仿学习loss
+    def aux_loss(self, first_aux_output, second_aux_output, gt_pos, gt_rot_mat, gt_vel, gt_ang_vel): # gr:ground truth
+        """根据辅助头输出与实际标签值计算辅助头的多任务学习loss
+
+        Args:
+            first_aux_output (_type_): 第一模块的辅助头输出 (B, T, 9)
+            second_aux_output (_type_): 第二模块的辅助头输出 (B, T, 9)
+            gt_pos (_type_): 相对位置真值 (B, T, 3)
+            gt_rot_mat (_type_): 相对姿态真值 (旋转矩阵)
+            gt_vel (_type_): 相对真值 (B, T, 3)
+            gt_ang_vel (_type_): 相对角速度真值 (B, T, 3)
+
+        Returns:
+            total_loss: 辅助头损失总值
         """
         # 切分预测值
-        # resnet输出结果(B, T, 9)normalized_input
-        pred_pos = resnet_output[..., 0:3] # 切出相对位置
-        pred_rot_6d = resnet_output[..., 3:9] # 切出相对姿态
+        # 感知模块的输出结果(B, T, 9)
+        pred_pos = first_aux_output[..., 0:3] # 切出相对位置
+        pred_rot_6d = first_aux_output[..., 3:9] # 切出相对姿态
 
-        # gru输出(B, T, 6)
-        pred_vel = gru_output[..., 0:3] # 切出相对速度
-        pred_ang_vel = gru_output[..., 3:6] # 相对角速度
+        # 时序模块的输出(B, T, 6)
+        pred_vel = second_aux_output[..., 0:3] # 切出相对速度
+        pred_ang_vel = second_aux_output[..., 3:6] # 相对角速度
 
         # 对位置速度角速度直接算mse
         loss_pos = F.mse_loss(pred_pos, gt_pos)
@@ -136,7 +146,17 @@ class SAC(object):
 
         return total_loss
 
-    def select_action(self,img_sequence, state, evaluate=False):
+    def select_action(self, img_sequence, state, evaluate=False):
+        """输入图片序列与目标位置，返回动作
+
+        Args:
+            img_sequence (_type_): 图片序列张量
+            state (_type_): 目标位置 (归一化值)
+            evaluate (bool, optional): 是否为评价模式(输出正态分布取样值还是均值) Defaults to False.
+
+        Returns:
+            action: action
+        """
         img_sequence=img_sequence.to(self.device)
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         if evaluate is False:
@@ -147,59 +167,118 @@ class SAC(object):
         self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
         return action.detach().cpu().numpy()[0]
 
-    def update_parameters(self, expert_memory, dagger_memory, exploration_memory, recent_memory, batch_size, updates):
-    # 数据准备阶段 (在CPU上准备好所有数据, 然后一次性转移)
+    def push_data(self, source, data):
+        """将经验存入buffer
 
-        # 1. 从各个Buffer采样 (仍然是Numpy数组)
-        exp_pi_img, exp_q_state, exp_action, exp_reward, exp_next_pi_img, \
-            exp_next_q_state, exp_done, exp_goal, exp_res_pos, exp_res_att, \
-            exp_gru_vel, exp_gru_ang = expert_memory.sample(batch_size=batch_size)
+        Args:
+            source (string): 描述数据要存入的buffer名称
+            data (tuple): 包含（所有数据）的一个元组，所有buffer存入数据类型都相同
+        """
+        self.memory.push(source, data)
+    
+    def check_buffer_len(self, buffer_name):
+        """查询buffer容量
 
-        expl_pi_img, expl_q_state, expl_action, expl_reward, expl_next_pi_img, \
-            expl_next_q_state, expl_done, expl_goal, expl_res_pos, expl_res_att, \
-            expl_gru_vel, expl_gru_ang = exploration_memory.sample(batch_size=batch_size)
+        Args:
+            buffer (string): 所要查询的buffer名称
 
-        dag_pi_img, dag_action, dag_goal, dag_res_pos, dag_res_att, \
-            dag_gru_vel, dag_gru_ang = dagger_memory.sample(batch_size=int(batch_size/2))
+        Returns:
+            length (int): 所查询的buffer长度
+        """
+        length = self.memory.__len__(buffer_name)
+        return length
+
+    def update(self, updates):
+        """网络参数更新
+
+        Args:
+            updates (int): 更新次数
+
+        Returns:
+            _type_: _description_
+        """
+        # 数据准备
+        sampled_data = self.memory.sample(self.training_args)
+
+        if sampled_data is None:
+            # print("buffer中没有足够的数据进行采样。")
+            return None, None, None, None, None
         
-        rec_pi_img, rec_action, rec_goal, rec_res_pos, rec_res_att, \
-            rec_gru_vel, rec_gru_ang = recent_memory.sample(batch_size=int(batch_size/2))
+        # 动态解包数据，最后一项是来源标志
+        """Python特性: 可迭代对象解包，使用了星号*的扩展形式。
+           当星号*出现在赋值语句的左侧时,它的意思是：“把所有剩余的项都收集到一个新的列表中”。
+           a, *b, c = list, 自动得到a=list[0], c=list[-1], b构建list中其他项组成的列表"""
+        *transitions, source = sampled_data
+        (pi_img, q_state, mpc_action, nn_action, next_pi_img, next_q_state, reward,
+            done, goal, aux_pos, aux_att, aux_vel, aux_ang) = transitions
+        
+        # 创建布尔掩码取代复杂拼接和切片
+        source = np.array(source) # 转换为numpy以便进行逻辑操作
+        expert_mask = (source == 'expert')
+        dagger_old_mask = (source == 'dagger_old')
+        dagger_recent_mask = (source == 'dagger_recent')
+        
+        # 以取并集的方式灵活调整掩码
+        # dagger数据的nn action才有用
+        dagger_mask = dagger_old_mask | dagger_recent_mask
+        # 用于模仿的数据
+        il_mask = expert_mask | dagger_mask # expert, old, recent都可用于模仿
+        # 辅助任务(Aux)使用所有数据
+        aux_mask = expert_mask | dagger_mask
 
-        # CPU上构建用于Critic更新的RL批次 (expert + exploration)
-        rl_q_state_batch = torch.cat((torch.from_numpy(exp_q_state), torch.from_numpy(expl_q_state)), dim=0)
-        rl_action_batch = torch.cat((torch.from_numpy(exp_action), torch.from_numpy(expl_action)), dim=0)
-        rl_reward_batch = torch.cat((torch.from_numpy(exp_reward), torch.from_numpy(expl_reward)), dim=0).unsqueeze(1)
-        rl_next_q_state_batch = torch.cat((torch.from_numpy(exp_next_q_state), torch.from_numpy(expl_next_q_state)), dim=0)
-        rl_done_batch = torch.cat((torch.from_numpy(exp_done), torch.from_numpy(expl_done)), dim=0).unsqueeze(1)
-        rl_next_pi_img_batch = torch.cat((torch.from_numpy(exp_next_pi_img), torch.from_numpy(expl_next_pi_img)), dim=0)
-        rl_next_goal_batch = torch.cat((torch.from_numpy(exp_goal), torch.from_numpy(expl_goal)), dim=0)
-        
-        # CPU上构建用于Policy更新的统一批次 (dagger + expert + exploration)
-        # 把所有用于策略更新的状态和目标都拼接起来，后面用切片的方法再分开
-        policy_pi_img_batch = torch.cat((torch.from_numpy(dag_pi_img), torch.from_numpy(rec_pi_img), torch.from_numpy(exp_pi_img), torch.from_numpy(expl_pi_img)), dim=0)
-        policy_goal_batch = torch.cat((torch.from_numpy(dag_goal), torch.from_numpy(rec_goal), torch.from_numpy(exp_goal), torch.from_numpy(expl_goal)), dim=0)
-        
-        # policy_q_state批次包含了策略网络需要评估的所有状态
-        policy_q_state_batch = torch.cat((torch.from_numpy(exp_q_state), torch.from_numpy(expl_q_state)), dim=0) # Dagger数据没有Q状态
 
-        # 用于计算IL Loss的“真值”动作 (dagger + expert)
-        # 注意：探索数据没有对应的专家动作，我们可以用零向量填充，但更简单的做法是在计算loss时只使用相应部分
-        il_action_batch = torch.cat((torch.from_numpy(dag_action), torch.from_numpy(rec_action), torch.from_numpy(exp_action)), dim=0)
+        # 准备Q函数（Critic）更新所需的数据
+        """
+        numpy.where 是一个三元操作符，基本语法是：np.where(condition, x, y)
+            它会检查 condition 数组中的每一个元素。
+            如果 condition 中某个位置的元素是 True，它就从 x 数组的对应位置取值。
+            如果 condition 中某个位置的元素是 False，它就从 y 数组的对应位置取值。
+            最终返回一个和 condition 形状相同的新数组。
+        expert_mask[:, np.newaxis]
+            解决形状不匹配问题。
+            is_expert_mask 的形状是 (batch_size,)，mpc_action 和 nn_action 的形状是 (batch_size, action_dim)。
+            不能直接用一个 (256,) 的掩码去对一个 (256, 6) 的数组进行 if-else 选择。
+            np.where 要求 condition 的形状能被广播到与 x 和 y 的形状相匹配，np.newaxis的作用是在指定位置增加一个新的维度，expert_mask[:, np.newaxis] 的形状是 (256, 1)
+        对于第 i 行，它检查 is_expert_mask[i] 的值。
+        如果 is_expert_mask[i] 是 True，那么 critic_action 的整个第 i 行都将被设置为 mpc_action 的第 i 行。
+        如果 is_expert_mask[i] 是 False，那么 critic_action 的整个第 i 行都将被设置为 nn_action 的第 i 行。
+        Critic使用所有有效的 (s, a, r, s') transition
+        对于 expert 数据，实际执行的动作是 mpc_action；对于 exploration 数据，实际执行的动作是 nn_action。
+        如果 这条数据来自 'expert' (专家) Buffer，那么就选择 mpc_action (专家动作) 作为Q函数要评估的动作。
+        否则 (即数据来自 'exploration' Buffer)，就选择 nn_action (智能体自己执行的动作) 作为Q函数要评估的动作。
+        """
+        critic_action = np.where(expert_mask[:, np.newaxis], mpc_action, nn_action)
         
-        # 用于辅助损失的真值
-        policy_res_pos_batch = torch.cat((torch.from_numpy(dag_res_pos), torch.from_numpy(rec_res_pos), torch.from_numpy(exp_res_pos), torch.from_numpy(expl_res_pos)), dim=0)
-        policy_res_att_batch = torch.cat((torch.from_numpy(dag_res_att), torch.from_numpy(rec_res_att), torch.from_numpy(exp_res_att), torch.from_numpy(expl_res_att)), dim=0)
-        policy_gru_vel_batch = torch.cat((torch.from_numpy(dag_gru_vel), torch.from_numpy(rec_gru_vel), torch.from_numpy(exp_gru_vel), torch.from_numpy(expl_gru_vel)), dim=0)
-        policy_gru_ang_batch = torch.cat((torch.from_numpy(dag_gru_ang), torch.from_numpy(rec_gru_ang), torch.from_numpy(exp_gru_ang), torch.from_numpy(expl_gru_ang)), dim=0)
+        # 将所有数据转换为Tensor
+        # 取出所有采样的数据，它们都可用于off-policy的Critic训练
+        q_state_batch = torch.from_numpy(q_state).float().to(self.device)
+        action_batch = torch.from_numpy(critic_action).float().to(self.device)
+        reward_batch = torch.from_numpy(reward).float().to(self.device).unsqueeze(1)
+        next_q_state_batch = torch.from_numpy(next_q_state).float().to(self.device)
+        done_batch = torch.from_numpy(done).float().to(self.device).unsqueeze(1)
+        next_pi_img_batch = torch.from_numpy(next_pi_img).float().to(self.device).squeeze(1)
+        next_goal_batch = torch.from_numpy(goal).float().to(self.device) # 'goal' 和 'next_goal' 通常是相同的
 
-        # 一次性将所有数据转移到GPU
-        device = self.device
-        rl_q_state_batch, rl_action_batch, rl_reward_batch, rl_next_q_state_batch, rl_done_batch, \
-        rl_next_pi_img_batch, rl_next_goal_batch = [t.float().to(device) for t in [rl_q_state_batch, rl_action_batch, rl_reward_batch, rl_next_q_state_batch, rl_done_batch, rl_next_pi_img_batch, rl_next_goal_batch]]
+        # 准备策略（Policy）更新所需的数据, 策略更新分为 IL 部分和 RL 部分
         
-        policy_pi_img_batch, policy_goal_batch, policy_q_state_batch, il_action_batch, \
-        policy_res_pos_batch, policy_res_att_batch, policy_gru_vel_batch, policy_gru_ang_batch = \
-            [t.float().to(device) for t in [policy_pi_img_batch, policy_goal_batch, policy_q_state_batch, il_action_batch, policy_res_pos_batch, policy_res_att_batch, policy_gru_vel_batch, policy_gru_ang_batch]]
+        # 模仿学习，模仿所有MPC的动作
+        # 掩码的使用方式和索引一样
+        il_pi_img_batch = torch.from_numpy(pi_img[il_mask]).float().to(self.device).squeeze(1)
+        il_goal_batch = torch.from_numpy(goal[il_mask]).float().to(self.device)
+        il_target_action_batch = torch.from_numpy(mpc_action[il_mask]).float().to(self.device)
+
+        # 强化学习仅使用NN动作数据
+        # 策略需要从自己行为中学习
+        rl_policy_mask = dagger_mask
+        rl_pi_img_batch = torch.from_numpy(pi_img[rl_policy_mask]).float().to(self.device).squeeze(1)
+        rl_goal_batch = torch.from_numpy(goal[rl_policy_mask]).float().to(self.device)
+        rl_q_state_for_policy_batch = torch.from_numpy(q_state[rl_policy_mask]).float().to(self.device)
+
+        # 辅助头
+        aux_pos_batch = torch.from_numpy(aux_pos[aux_mask]).float().to(self.device)
+        aux_att_batch = torch.from_numpy(aux_att[aux_mask]).float().to(self.device)
+        aux_vel_batch = torch.from_numpy(aux_vel[aux_mask]).float().to(self.device)
+        aux_ang_batch = torch.from_numpy(aux_ang[aux_mask]).float().to(self.device)
 
         # LR热启动
         if updates < self.warm_up_steps:
@@ -213,136 +292,81 @@ class SAC(object):
             # 应用到 Policy 优化器
             for param_group in self.policy_optim.param_groups:
                 param_group['lr'] = current_lr
-
-        # Critic 网络更新 (逻辑不变, 使用准备好的rl批次)
+        
+        # Critic Loss
         with torch.no_grad():
-            next_state_action, next_state_log_pi, _, _, _, _ = self.policy.sample(rl_next_pi_img_batch, rl_next_goal_batch) 
-            qf1_next_target, qf2_next_target = self.critic_target(rl_next_q_state_batch, next_state_action) 
-            min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) 
-            target_q_value = rl_reward_batch + (1 - rl_done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi)
-        qf1, qf2 = self.critic(rl_q_state_batch, rl_action_batch)  
+            next_state_action, next_state_log_pi, _, _, _, _ = self.policy.sample(next_pi_img_batch, next_goal_batch)
+            qf1_next_target, qf2_next_target = self.critic_target(next_q_state_batch, next_state_action)
+            min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
+            target_q_value = reward_batch + (1 - done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi)
+        qf1, qf2 = self.critic(q_state_batch, action_batch)
         # print(f"min_qf_next_target:{torch.mean(min_qf_next_target)}")
         # print(f"reward:{torch.mean(rl_reward_batch)}, target_q_value:{torch.mean(target_q_value)}, qf1:{torch.mean(qf1)}, qf2:{torch.mean(qf2)}") 
         qf_loss = F.mse_loss(qf1, target_q_value) + F.mse_loss(qf2, target_q_value)
         # print(f"q_loss:{qf_loss}")
-        
+
         self.critic_optim.zero_grad()
-        qf_loss.backward() 
-        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=1.0)
+        qf_loss.backward()
+        # max_norm 指定了梯度范数（梯度向量长度）的上限阈值。
+        # 当计算出的梯度范数超过这个值时，所有梯度会被等比例缩放，使得最终范数恰好等于 max_norm。范数不超过该阈值时，梯度保持不变。
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm = self.max_norm_grad)
         self.critic_optim.step()
 
-        # Policy 网络更新
-        # 对全部数据统一的策略批次进行一次前向传播
-        pi, log_pi, _, resnet_output, gru_output, _ = self.policy.sample(policy_pi_img_batch, policy_goal_batch)
+        # Policy Loss
+        # 为了计算所有loss，我们需要对所有相关的输入进行一次前向传播
+        # 将 IL 和 RL 的输入合并，只进行一次 policy 网络计算，提高效率
+        combined_pi_img_batch = torch.cat((il_pi_img_batch, rl_pi_img_batch), dim=0)
+        combined_goal_batch = torch.cat((il_goal_batch, rl_goal_batch), dim=0)
         
-        # 计算IL损失组件 (只使用pi中对应dagger, recent和expert的部分)
-        # il_action_batch的大小是 (dagger的batch_size + exp的batch_size)
-        # policy_batch的顺序是dagger+expert+exploration
-        il_slice_size = int(il_action_batch.shape[0]/2)
-        il_policy_loss_component = physics_MSE(pi[:il_slice_size], il_action_batch[:il_slice_size]) + physics_MSE(pi[il_slice_size:il_slice_size*2], il_action_batch[il_slice_size:])
-
-        # 计算RL损失组件 (只使用pi中对应expert和exploration的部分)
-        # policy_q_state_batch的大小是 (batch_size + batch_size)
-        rl_slice_start = int(batch_size) # Dagger+recent数据之后是Expert数据+exploration数据
-        qf1_pi, qf2_pi = self.critic(policy_q_state_batch, pi[rl_slice_start:]) # policy_q_state是exp+explore
+        pi, log_pi, _, first_aux_output, second_aux_output, _ = self.policy.sample(combined_pi_img_batch, combined_goal_batch)
+        
+        # 分离 IL 和 RL 的输出
+        num_il_samples = il_pi_img_batch.shape[0]
+        pi_il = pi[:num_il_samples]
+        pi_rl = pi[num_il_samples:]
+        log_pi_rl = log_pi[num_il_samples:]
+        
+        # IL Loss
+        il_loss = physics_MSE(pi_il, il_target_action_batch)
+        
+        # RL Loss
+        qf1_pi, qf2_pi = self.critic(rl_q_state_for_policy_batch, pi_rl)
         min_qf_pi = torch.min(qf1_pi, qf2_pi)
-        # 注意log_pi也需要切片
-        rl_policy_loss_component = ((self.alpha * log_pi[rl_slice_start:]) - min_qf_pi).mean()
-
-        # 计算辅助损失
-        aux_loss = self.aux_loss(resnet_output, gru_output, policy_res_pos_batch, policy_res_att_batch, 
-                                policy_gru_vel_batch, policy_gru_ang_batch)
+        rl_loss = ((self.alpha * log_pi_rl) - min_qf_pi).mean()
         
-        '''
-        暂时不使用这一段代码混合il+rl，先用线性衰减权重，后期视效果再加上
-        '''
-        # # 计算强化学习损失权重
-        # with torch.no_grad():
-        #     current_td_error = qf_loss.item()
-        #     disagreement = torch.abs(qf1_pi - qf2_pi).mean().item()
-            
-        #     # 步骤A: 收集当前窗口的数据
-        #     self._window_td_errors.append(current_td_error)
-        #     self._window_disagreements.append(disagreement)
+        # Aux Loss
+        # first_aux_output和second_aux_output也需要被分离以匹配维度
+        first_aux_output = first_aux_output[:num_il_samples] # aux与IL维度相同
+        second_aux_output = second_aux_output[:num_il_samples]
+        aux_loss = self.aux_loss(first_aux_output, second_aux_output, aux_pos_batch, aux_att_batch,
+                                aux_vel_batch, aux_ang_batch)
 
-        #     # 到达窗口末尾时评估和更新基线
-        #     if updates % self.baseline_update_window == 0:
-        #         # 计算当前窗口的候选基线
-        #         candidate_td = np.mean(self._window_td_errors) + 1e-8
-        #         candidate_dis = np.mean(self._window_disagreements) + 1e-8
-
-        #         if not self._is_initial_baseline_set:
-        #             # 特殊情况：第一次设置基线，无条件接受
-        #             self.baseline_td = candidate_td
-        #             self.baseline_dis = candidate_dis
-        #             self.initial_td = candidate_td # 设置最初td_error值，避免训练末期rl权重反而过小
-        #             self.initial_dis = candidate_dis
-        #             self._is_initial_baseline_set = True
-        #             self.target_baseline_td = candidate_td # 设置目标值，实现缓慢下降而非阶跃变化
-        #             self.target_baseline_dis = candidate_dis
-        #             print("--- Initial baseline set ---")
-        #         else:
-        #             # 如果候选值大于旧基线，或者远小于旧基线，则更新；在这里剪裁，避免候选值过小
-        #             if candidate_td > self.baseline_td or candidate_td < self.baseline_update_gamma * self.baseline_td:
-        #                 self.target_baseline_td = max(candidate_td, self.initial_td * self.k_rl_threshold)
-        #                 self.delta_baseline_td = (self.baseline_td - self.target_baseline_td) / self.baseline_update_window
-                    
-        #             if candidate_dis > self.baseline_dis or candidate_dis < self.baseline_update_gamma * self.baseline_dis:
-        #                 self.target_baseline_dis = max(candidate_dis, self.initial_dis * self.k_rl_threshold)
-        #                 self.delta_baseline_dis = (self.baseline_dis - self.target_baseline_dis) / self.baseline_update_window
-
-        #             print("--- Baseline re-evaluated ---")
-
-        #         # 打印当前基线值以供监控
-        #         print(f"  New target TD Baseline: {self.target_baseline_td:.4f} (Candidate: {candidate_td:.4f})")
-        #         print(f"  New target Dis. Baseline: {self.target_baseline_dis:.4f} (Candidate: {candidate_dis:.4f})")
-
-        #         # 清空窗口数据，为下一个周期做准备
-        #         self._window_td_errors = []
-        #         self._window_disagreements = []
-        
-        #     self.baseline_dis = self.baseline_dis - self.delta_baseline_dis
-        #     self.baseline_td = self.baseline_td - self.delta_baseline_td
-            
-        #     # 使用当前基线进行归一化并计算权重
-        #     if not self._is_initial_baseline_set:
-        #         # 在第一个基线建立之前，倾向于模仿
-        #         w_rl = torch.tensor(0.0, device=self.device)
-        #     else:
-        #         norm_td = min(current_td_error / self.baseline_td, 2.0) # 裁剪值可以适当放大
-        #         norm_dis = min(disagreement / self.baseline_dis, 2.0)
-                
-        #         # hybrid_metric = norm_td  * norm_dis
-        #         hybrid_metric = max(norm_td, norm_dis)
-        #         w_rl = torch.exp(torch.tensor(-self.k_final * hybrid_metric, device=self.device))
-
-        #     w_il = 1 - w_rl
-
-        w_rl = min(1, updates/self.baseline_update_window)*self.baseline_update_gamma
-        # 计算最终加权总损失
-        total_policy_loss = w_rl * rl_policy_loss_component + (1 - w_rl) * il_policy_loss_component * self.dagger_weight + self.aux_loss_weight * aux_loss
+        # 动态权重调整
+        w_rl = min(1, updates / self.loss_dynamic_change_window) * self.rl_loss_weight_target
+        total_policy_loss = w_rl * rl_loss + (1 - w_rl) * il_loss * self.il_weight + self.aux_loss_weight * aux_loss
         
         self.policy_optim.zero_grad()
         total_policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm = self.max_norm_grad)
         self.policy_optim.step()
 
-        # Alpha和Target Network更新
-        alpha_loss = torch.tensor(0.).to(device)
+        # Alpha Loss
+        alpha_loss = torch.tensor(0.).to(self.device)
         alpha_tlogs = torch.tensor(self.alpha)
         if self.automatic_entropy_tuning:
-            # 注意log_pi也需要用RL上下文的部分
-            alpha_loss = -(self.alpha * (log_pi[rl_slice_start:].detach() + self.target_entropy)).mean()
+            alpha_loss = -(self.alpha * (log_pi_rl.detach() + self.target_entropy)).mean()
             self.alpha_optim.zero_grad()
             alpha_loss.backward()
             self.alpha_optim.step()
             alpha_tlogs = self.alpha.clone()
 
+        # 更新Target Network
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
-        # print(f"td_error:{norm_td}, norm_dis:{norm_dis}")
-        print(f"RL weight:{w_rl}, Q:{qf_loss}, RL:{w_rl * rl_policy_loss_component}, IL:{(1 - w_rl) * il_policy_loss_component * self.dagger_weight}, aux:{self.aux_loss_weight * aux_loss}")
-        return total_policy_loss.item(), rl_policy_loss_component.item(), il_policy_loss_component.item(), alpha_loss.item(), alpha_tlogs.item()
+
+        print(f"RL weight:{w_rl:.2f}, Q:{qf_loss.item():.4f}, RL:{rl_loss.item():.4f}, IL:{il_loss.item():.4f}, Aux:{aux_loss.item():.4f}")
+        
+        return total_policy_loss.item(), qf_loss.item(), rl_loss.item(), il_loss.item(), aux_loss.item()
 
     # Save model parameters
     def save_model(self, filename="master"):

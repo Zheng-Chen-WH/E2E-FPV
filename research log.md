@@ -393,4 +393,32 @@
 + 可能的后续修改方向：
   + 考虑PPO，收集足够多数据之后固定次数反复训练，不再off-policy
   + 对图像进行经典CV预处理？
+
+## 11.14
++ 重构了参数传入和model构建，现在在config.py修改参数就能改变底层模型架构
++ 加入了自定义ViT，可选为第一模块
++ 给ResNet和ViT都加入了时间编码功能，兼容可能的transformer架构第二模块
++ memory也转为参数可在参数定义文件自定义结构的方式，并且在sac.py内部进行定义（之前在main.py）
++ memory现在只包含expert和exploration两部分，使用时：
+  1. 在'buffer_configs'字典中设置两个部分大小
+  2. 在'batch_size'字典中设置取样数量，可以识别_recent与_old后缀（代表近期数据取样数量与往期数据采样数量）
+  3. recent_size表示最近取样池大小
+  4. batchsize中：
+    + _recent键后缀会在对应数据集最后的recent_size组数据中取样value个作为近期数据
+    + _old键后缀会在与recent不重叠的部分中取样value个数据
+    + 不带后缀的就是从key对应的整个数据集中抽样
+    + 比如下述情况，就是从dagger数据集中划出最后32个作为近期数据池，并在其中抽出16组，dagger除去recent的部分再抽出64组
+```
+'recent_size': 32 # 定义“最近期数据池”范围,
+'batch_size': { # 定义每个buffer取样数量
+    'expert': 64, # expert buffer取样数，用于IL
+    'dagger_old': 64, # dagger buffer中，[0:-'dagger_recent']中取样数，解包MPC action用于IL，解包NN action用于RL
+    'dagger_recent': 16 # 在dagger中抽取最后16组数据
+}
+```
+
++ 修改了冗长的main.py；主要修改包括：
+  1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
+  2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
++ 停用0-10的范围，改为-5~5
         
