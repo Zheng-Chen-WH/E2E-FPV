@@ -213,10 +213,10 @@ SAC_param = {"gamma":0.99, # reward长期衰减因数 (default: 0.99)
             'mu_init_boundary': 0.1, # policy的mu层初始化时界限
             'target_update_interval': 20, # 目标网络更新的间隔
             'automatic_entropy_tuning': False, # 自动调整温度系数alpha (default: False)
-            'warm_up_steps': 1000, # 学习率预热，在这些updates内学习率线性提升到设定的lr值
+            'warm_up_steps': 100000, # 学习率预热，在这些updates内学习率线性提升到设定的lr值
             'lr': 1e-4,  # 学习率 (default: 0.0003)
             'action_dim': ACTION_DIM, #动作维度
-            'loss_dynamic_change_window': 50000, # il+rl动态权重机制下，loss的线性变换周期长度
+            'loss_dynamic_change_window': 500000, # il+rl动态权重机制下，loss的线性变换周期长度
             'rl_loss_weight_target': 0.8,  # 线性衰减时rl_loss占比最终值
             'max_norm_grad': 1.0, # default=1.0, 梯度裁剪阈值，当计算出的梯度范数超过这个值时，所有梯度会被等比例缩放 
             'buffer_param':{
