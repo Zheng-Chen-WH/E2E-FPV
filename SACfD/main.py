@@ -37,7 +37,8 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'replay_size':cfg.BUFFER_SIZE, # size of replay buffer (default: 10000000)
     'recent_buffer_size': cfg.RECENT_BUFFER_SIZE,
     'cuda':True, # run on CUDA (default: False)
-    'LOAD PARA': False, #是否读取参数, full model params
+    'LOAD PARA': True, #是否读取参数, full model params
+    'CHECKPOINT_PATH': 'train_model/20251118_191312/master_36_-9.99_12.3599_17.8',  # checkpoint路径(当LOAD PARA=True时使用)
     'USE_PRETRAINED_VISION': True,  # 是否使用预训练的ResNet+GRU模型
     'PRETRAINED_CHECKPOINT_PATH': 'pretrain_results/aux_model_6000_mpc.pt',  # 预训练模型路径
     'FREEZE_VISION_EPOCHS': 20,  # 在前N个epoch冻结预训练的视觉编码器（0表示不冻结）
@@ -50,7 +51,7 @@ args={'eval':True, # Evaluates a policy a policy every 10 episode (default: True
     'seed':20000323, #网络初始化的时候用的随机数种子  
     'max_epoch':30000,
     'logs':True, #是否留存训练参数供tensorboard分析 
-    'embedding_dim':128,
+    'embedding_dim':256,  # 必须匹配预训练模型 (aux_model_6000_mpc.pt 使用 256)
     'num_frames':4,
     'door_frames':cfg.door_frames_names,
     'max_action':cfg.SCALED_CONTROL_MAX, # 放大网络输出倍数
@@ -195,15 +196,27 @@ recent_memory = DAggerMemory(args['recent_buffer_size']) # 把recent加回来
 # last_episode_detailed_data = None # For detailed logging of the final episode if needed
 
 if args['task']=='Train':
+    # 确定实验名称和日志目录
+    if args['LOAD PARA']:
+        # 从checkpoint路径提取实验名称
+        checkpoint_path = args['CHECKPOINT_PATH']
+        experiment_name = checkpoint_path.split('/')[1]  # 提取时间戳部分
+        print(f"Resuming experiment: {experiment_name}")
+    else:
+        # 新训练,创建新的实验名称
+        from datetime import datetime
+        experiment_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+        print(f"Starting new experiment: {experiment_name}")
+    
     if args['logs']==True:
         from torch.utils.tensorboard import SummaryWriter
-        from datetime import datetime
-        # 创建带描述性名称的子目录来组织实验
-        experiment_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # 使用相同的实验名称作为日志目录
         log_dir = f'runs/{experiment_name}'
         writer = SummaryWriter(log_dir)
         print(f"TensorBoard logs saved to: {log_dir}")
         print(f"View with: tensorboard --logdir=runs")
+        print(f"Or specifically: tensorboard --logdir={log_dir}")
+    
     # Training Loop
     updates = 0
     best_avg_reward = -900
@@ -219,7 +232,7 @@ if args['task']=='Train':
         print("="*60)
         print("LOADING CHECKPOINT")
         print("="*60)
-        training_state = agent.load_model("master_now_best", evaluate=False)
+        training_state = agent.load_model(args['CHECKPOINT_PATH'], evaluate=False)
         
         # 恢复训练状态
         if training_state['episode'] is not None:
@@ -306,7 +319,7 @@ if args['task']=='Train':
                     success=True
                 break
         # MPC数据收集阶段不记录reward（这不是NN的表现）
-        print(f"----------------------Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------") #, loss{policy_loss}")
+        # print(f"----------------------Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------") #, loss{policy_loss}")
         # round(episode_reward,2) 对episode_reward进行四舍五入，并保留两位小数
 
         # 检查是否需要解冻视觉编码器（只在达到指定epoch时执行一次）
@@ -382,12 +395,12 @@ if args['task']=='Train':
                         #     agent.save_model(model_name)
                         #     k += 1
                         break
-                print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
+                # print(f"----------------------DAgger-Episode: {i_episode}, steps: {episode_steps}, reward: {round(episode_reward, 2)}, succeed: {success}----------------------")
             # 记录DAgger阶段的reward（NN控制+MPC标签）
             if args['logs']==True:
                 writer.add_scalar('loss/episode_reward', episode_reward, i_episode)
                 
-        if i_episode % (args['evaluate_freq'] * 20) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 20轮mpc+dagger之后进行一轮测试
+        if i_episode % (args['evaluate_freq'] * 10) == 0 and args['eval'] is True and len(exploration_memory) > args['batch_size'] * 5 and len(expert_memory) > args['batch_size'] * 5: # 20轮mpc+dagger之后进行一轮测试
             avg_reward = 0.
             episodes = args['evaluate_freq'] * 5  # 每次测试运行5个episode来评估性能
             done_num=0
@@ -445,11 +458,11 @@ if args['task']=='Train':
             agent.save_model(model_name, training_state=training_state)
             k += 1
             print("----------------------------------------")
-            print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
+            print(f"Test Num: {i_episode/(args['evaluate_freq']*10)}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
 
-        if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0) and os.path.isfile("best_master_model.pt"): # 大于100轮之后，每20个模型重新加载一次
-            agent.load_model("best_master", evaluate=False)
+        # if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0) and os.path.isfile("best_master_model.pt"): # 大于100轮之后，每20个模型重新加载一次
+        #     agent.load_model("best_master", evaluate=False)
 
         if i_episode==args['max_epoch']:
             # 训练结束，显示总结信息

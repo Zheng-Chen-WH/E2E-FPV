@@ -1014,7 +1014,8 @@ def load_pretrained_weights_to_policy(policy_model, checkpoint_path, device):
     Returns:
         policy_model with loaded pretrained weights
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # PyTorch 2.6+ requires weights_only=False for checkpoints containing numpy objects
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     policy_model.GRU.load_state_dict(checkpoint['model_state_dict'])
     print(f"Loaded pretrained auxiliary heads from {checkpoint_path}")
     print(f"  Pretrained episode: {checkpoint.get('episode', 'unknown')}")
