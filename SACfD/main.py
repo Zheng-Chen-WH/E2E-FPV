@@ -25,7 +25,7 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     # 频率相关参数
     'updates_interval': 1, # total_num_step达到value步后进行一组训练（类似PPO效果）
     'updates_per_episode': 1, # 每步对参数更新的次数
-    'evaluate_freq': 25, # 训练过程中value个episode之后进行测试
+    'evaluate_freq': 25, # 训练过程中value个episode之后进行测试;PPO需要大得多的值
     'evaluate_episode': 5, # 训练过程中插入测试的次数
     'expert_freq': 5, # 训练过程中value个episode进行一次纯MPC示范飞行
     'roll_back': False, # 是否一段时间后开始自动回滚
@@ -68,6 +68,8 @@ if args['task']=='Train':
     best_avg_reward = - np.inf
     k = 0
     total_num_steps = 0
+    # PPO需要累计步数来实现达到n_steps后更新
+    accumulated_steps = 0
     roll_back = args['roll_back']
     if args['LOAD PARA']==True:
         agent.load_model(args['load_file'], evaluate=False)
@@ -80,31 +82,32 @@ if args['task']=='Train':
         episode_steps = 0
         phase_idx = 0
         current_drone_state, final_target_state, waypoints_y, door_z_positions, door_param,\
-                 img_tensor, Q_state, final_pi_target, elapsed_time, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                 img_tensor, critic_state, final_pi_target, elapsed_time, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
         MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
         agent.reset()
         while episode_steps <= args['max_steps']:
 
             # 生成动作
-            NN_action = agent.select_action(img_tensor, final_pi_target)  # 输出actor网络动作
+            NN_action, log_prob, value, hidden_state = agent.select_action(img_tensor, final_pi_target, critic_state)  # 输出actor网络动作
             MPC_action = MPC_agent.step(current_drone_state, phase_idx, elapsed_time)
-
-            # 把MPC动作映射到（0，10）
+            # print(hidden_state.shape if hidden_state is not None else None)
+            # 把MPC动作映射到神经网络动作空间
             scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], 
                                           agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'])
             print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
 
-            # 把NN动作映射回 (0,1)
+            # 把NN动作映射回MPC动作空间
             rescaled_NN_action = map_value(NN_action, agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'], 
                                            mpc_params['control_min'], mpc_params['control_max'])
             
             # episode数达到freq时进行mpc示范飞行
             if i_episode % args['expert_freq'] == 0:
-                next_drone_state, next_img_tensor, next_Q_state,\
+                next_drone_state, next_img_tensor, next_critic_state,\
                     reward, done, phase_idx, info, elapsed_time,\
                     relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(MPC_action)
+                # print(attitude_9d.shape)
             else: # 进行神经网络控制的DAgger飞行
-                next_drone_state, next_img_tensor, next_Q_state,\
+                next_drone_state, next_img_tensor, next_critic_state,\
                     reward, done, phase_idx, info, elapsed_time,\
                     relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)
             
@@ -115,23 +118,34 @@ if args['task']=='Train':
             # 存储数据
             if math.fabs(scaled_MPC_action[0]) < math.fabs(agent_args['actor_param']['scaled_max_action']) and \
                 scaled_MPC_action[0] > agent_args['actor_param']['scaled_min_action']:
-                '''expert_memory.push(img_tensor, Q_state, scaled_MPC_action, reward, next_img_tensor, next_Q_state, done, final_pi_target,
-                            relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel)'''
-                agent.push_data("expert", (img_tensor, Q_state, scaled_MPC_action, NN_action, next_img_tensor, next_Q_state, reward,
-            done, final_pi_target, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel))
-                agent.push_data("dagger", (img_tensor, Q_state, scaled_MPC_action, NN_action, next_img_tensor, next_Q_state, reward,
-            done, final_pi_target, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel))
+                
+                # SAC与PPO均需存入expert和dagger buffer
+                agent.push_data("expert", (img_tensor, critic_state, scaled_MPC_action, NN_action, next_img_tensor, next_critic_state, reward,
+                    done, final_pi_target, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel))
+                agent.push_data("dagger", (img_tensor, critic_state, scaled_MPC_action, NN_action, next_img_tensor, next_critic_state, reward,
+                    done, final_pi_target, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel))
+                # print("expert_buffer",type(img_tensor), img_tensor.shape)
+                # PPO将当前步数据存入rollout buffer
+                if args['rl_algorithm'] == 'PPO' and log_prob is not None:
+                    # rollout buffer需要: (img_seq, V_state, state, action, reward, done, log_prob, value, 
+                    #                      pos, rot, vel, ang, hidden_state)
+                    # print("rollout_buffer",type(img_tensor), img_tensor.shape)
+                    agent.push_data("rollout", (img_tensor, critic_state, final_pi_target, NN_action, reward, done, 
+                                                 log_prob, value, relative_next_target_pos, attitude_9d, 
+                                                 relative_next_target_vel, fpv_angular_vel, hidden_state))  # hidden_state暂时用None占位
             
             # 这些变量更新会影响数据存入
             current_drone_state = next_drone_state
             img_tensor = next_img_tensor
-            Q_state = next_Q_state
+            critic_state = next_critic_state
 
-            # 训练
-            if total_num_steps % args['updates_interval'] == 0:
+            if args['rl_algorithm'] == 'PPO':
+                accumulated_steps += 1
+
+            # SAC训练: 每隔固定步数就更新
+            if args['rl_algorithm'] == 'SAC' and total_num_steps % args['updates_interval'] == 0:
+                print("training step")
                 for i in range(args['updates_per_episode']):
-                    # Update parameters of all the networks
-                    '''policy_loss, rl_loss, il_loss, ent_loss, alpha = agent.update_parameters(expert_memory, dagger_memory, exploration_memory, recent_memory, args['batch_size'], updates)'''
                     policy_loss, qf_loss, rl_loss, il_loss, aux_loss = agent.update(updates)
                     if args['logs'] == True and policy_loss is not None:
                         writer.add_scalar('loss/policy', policy_loss, updates)
@@ -141,8 +155,24 @@ if args['task']=='Train':
                         writer.add_scalar('loss/aux_loss', aux_loss, updates)
                     updates += 1
             
-            if done:
-                # print(f"收集到数据量：{len(memory)}")
+            # PPO训练: 在episode结束后，计算returns和advantages，然后更新
+            update_condition = (accumulated_steps >= agent_args['PPO_param']['n_steps'] and done)
+            if args['rl_algorithm'] == 'PPO' and update_condition:
+                accumulated_steps = 0
+                # 更新网络
+                policy_loss, value_loss, rl_loss, il_loss, aux_loss, n_updates = agent.update(updates)
+                
+                # 记录日志
+                if args['logs'] == True:
+                    writer.add_scalar('loss/policy', policy_loss, updates)
+                    writer.add_scalar('loss/value', value_loss, updates)
+                    writer.add_scalar('loss/rl_loss', rl_loss, updates)
+                    writer.add_scalar('loss/il_loss', il_loss, updates)
+                    writer.add_scalar('loss/aux_loss', aux_loss, updates)
+                updates += n_updates
+
+            if done: 
+                # 检查是否成功
                 if info:
                     success=True
                 break
@@ -168,22 +198,22 @@ if args['task']=='Train':
                 success=False
                 phase_idx = 0
                 current_drone_state, final_target_state, waypoints_y,\
-                        door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
+                        door_z_positions, door_param, img_tensor, critic_state, final_pi_target, elapsed_time,\
                              relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
                 agent.reset()
                 while True:
-                    NN_action = agent.select_action(img_tensor, final_pi_target, evaluate=True)  # 开始输出actor网络动作
+                    NN_action, _, _, _ = agent.select_action(img_tensor, final_pi_target, critic_state, evaluate=True)  # 开始输出actor网络动作
                     rescaled_NN_action = map_value(NN_action, agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'], 
                                            mpc_params['control_min'], mpc_params['control_max'])
                     # print(f"action:{rescaled_NN_action}")
-                    next_drone_state, next_img_tensor, next_Q_state,\
+                    next_drone_state, next_img_tensor, next_critic_state,\
                         reward, done, phase_idx, info, elapsed_time,\
                         relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)  # Step
                     episode_reward += reward 
                     
                     current_drone_state = next_drone_state
                     img_tensor = next_img_tensor
-                    Q_state = next_Q_state
+                    critic_state = next_critic_state
                     avg_step += 1
                     if info:
                         done_num+=1
@@ -197,9 +227,10 @@ if args['task']=='Train':
             if avg_reward >= best_avg_reward and avg_reward >= 0.0:
                 best_avg_reward = avg_reward
                 agent.save_model("best_master")
-            model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
-            agent.save_model(model_name)
-            k += 1
+            if updates > 10:
+                model_name = f'master_{k}_{round(avg_reward,2)}_{round(policy_loss,4)}_{round(avg_step,2)}'
+                agent.save_model(model_name)
+                k += 1
             print("----------------------------------------")
             print(f"Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 2)}, success num：{done_num}")
             print("----------------------------------------")
@@ -230,7 +261,7 @@ if args['task']=='Test':
         success=False
         phase_idx = 0
         current_drone_state, final_target_state, waypoints_y,\
-                        door_z_positions, door_param, img_tensor, Q_state, final_pi_target, elapsed_time,\
+                        door_z_positions, door_param, img_tensor, critic_state, final_pi_target, elapsed_time,\
                              relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
         agent.reset()
         while True:
@@ -238,16 +269,20 @@ if args['task']=='Test':
             # print(f"true attitude:", attitude_9d)
             # print(f"true velocity:", relative_next_target_vel)
             # print(f"true angular:", fpv_angular_vel)
-            NN_action = agent.select_action(img_tensor, final_pi_target)  # 开始输出actor网络动作
-            rescaled_NN_action = map_value(NN_action, args['min_action'], args['max_action'], mpc_params['control_min'], mpc_params['control_max'])
-            next_drone_state, next_img_tensor, next_Q_state,\
+            
+            # SAC和PPO兼容处理
+            NN_action, _, _, _ = agent.select_action(img_tensor, final_pi_target, critic_state, evaluate=True)  # 开始输出actor网络动作
+            
+            rescaled_NN_action = map_value(NN_action, agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'], 
+                                           mpc_params['control_min'], mpc_params['control_max'])
+            next_drone_state, next_img_tensor, next_critic_state,\
                 reward, done, phase_idx, info, elapsed_time,\
                 relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.step(rescaled_NN_action)
             episode_reward += reward
             current_drone_state = next_drone_state
             img_tensor = next_img_tensor
             # past_actions = next_past_actions
-            Q_state = next_Q_state
+            critic_state = next_critic_state
             episode_steps += 1
             avg_reward+=reward
             if info:

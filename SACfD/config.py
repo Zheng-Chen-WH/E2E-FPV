@@ -132,7 +132,7 @@ second_output_dim = 128                                     # 第二模块（GRU
 second_aux_dim = 6                                          # 第二模块辅助头输出维度，相对下一目标的速度+3D角速度 
 actor_param = {"action_dim": ACTION_DIM,                    # 动作网络输出：4个PWM
                "first_module": "ViT",                       # 第一模块类型，ResNet/ViT
-               "second_module": "TempT",                    # 第二模块类型，GRU/TempT
+               "second_module": "GRU",                    # 第二模块类型，GRU/TempT
                "first_aux_dim": first_aux_dim, 
                "second_aux_dim": second_aux_dim,
                "scaled_max_action": SCALED_CONTROL_MAX,     # 缩放后动作上限值
@@ -215,6 +215,7 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
             'mu_init_boundary': 0.1,                        # policy的mu层初始化时界限
             'target_update_interval': 20,                   # 目标网络更新的间隔
             'automatic_entropy_tuning': False,              # 自动调整温度系数alpha (default: False)
+            'chunk_update': False,                           # 是否使用序列更新，如果使用GRU且想维持长期记忆就需要True；TempT和短序列GRU都为False（否则与现在的buffer不匹配）
             'warm_up_steps': 100000,                        # 学习率预热，在这些updates内学习率线性提升到设定的lr值
             'lr': 1e-4,                                     # 学习率 (default: 0.0003)
             'action_dim': ACTION_DIM,                       # 动作维度
@@ -244,51 +245,54 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
             }
 
 PPO_param = {
-    "gamma": 0.99,                                          # reward长期衰减因数 (default: 0.99)
-    "lr": 1e-4,                                             # 学习率 (default: 0.0003)
-    "seed": 20000323,                                       # 网络初始化的时候用的随机数种子
-    # PPO 核心参数
-    "n_steps": 2048,                                        # Rollout Buffer 长度 (每次更新前收集多少步数据)
-    "mini_batch_size": 64,                                  # 每次更新时的 Mini-batch 大小
-    "ppo_epoch": 10,                                        # 每次 update 循环更新多少次 (K epochs)
-    "clip": 0.2,                                            # PPO 裁剪范围 (epsilon), 通常 0.1~0.2
-    "gae_lambda": 0.95,                                     # GAE 平滑系数
-    # 系数
-    "value_loss_coef": 0.5,                                 # Value Loss 的权重系数 (c1)
-    "entropy_coef": 0.01,                                   # 熵正则项的权重系数 (c2)，鼓励探索
-    "max_norm_grad": 0.5,                                   # 梯度裁剪阈值，当计算出的梯度范数超过这个值时，所有梯度会被等比例缩放(PPO通常比SAC小一点)
-    # il使用的buffer参数
-    'buffer_param':{
-                'buffer_configs':{                      # 定义memory结构
-                    'expert': 15000,                        # 纯粹收集MPC示范过程的数据，实际执行MPC动作
-                    'dagger': 15000                         # 收集dagger过程的数据，现在同时收集NN和MPC动作了，实际执行NN动作
-                    }, 
+            # 基础参数
+            "gamma": 0.99,                                  # reward长期衰减因数 (default: 0.99)
+            "lr": 3e-4,                                     # 学习率 (PPO论文推荐3e-4)
+            "seed": 20000323,                               # 网络初始化的时候用的随机数种子
+            # PPO 核心参数
+            "n_steps": 64,                                  # default=2048, Rollout Buffer 长度 (每次更新前收集多少步数据)
+            "mini_batch_size": 32,                          # default=64, 每次更新时的 Mini-batch 大小，现在是"序列块数量"
+            "ppo_epoch": 10,                                # 每次 update 循环更新多少次 (K epochs)
+            "clip": 0.2,                                    # PPO 裁剪范围 (epsilon), 通常 0.1~0.2
+            "gae_lambda": 0.95,                             # GAE 平滑系数 (λ)
+            'adv_normalization': True,                      # 是否对优势函数进行归一化
+            # 损失函数系数
+            "value_loss_coef": 0.5,                         # Value Loss 的权重系数 (c1)
+            "entropy_coef": 0.01,                           # 熵正则项的权重系数 (c2)，鼓励探索
+            "max_norm_grad": 0.5,                           # 梯度裁剪阈值 (PPO通常比SAC小)
+            # 网络初始化
+            "mu_init_boundary": 0.01,                       # policy的mu层初始化时界限（PPO通常更小）
+            'warm_up_steps': 10000,                         # 学习率预热，在这些updates内学习率线性提升到设定的lr值
+            'buffer_param':{                            # Imitation Learning (IL) Buffer参数
+                'buffer_configs':{                          # 定义memory结构
+                    'expert': 15000,                        # 纯粹收集MPC示范过程的数据
+                    'dagger': 15000                         # 收集dagger过程的数据
+                }, 
                 'recent_size': 32                           # 定义“最近期数据池”范围
-                },
-            'batch_size': {                             # 定义每个buffer取样数量
-                'expert': 64,                               # default=64, expert buffer取样数，用于IL
-                'dagger_old': 32,                           # default=64, dagger buffer中，[0:-'dagger_recent']中取样数，解包MPC action用于IL，解包NN action用于RL
-                'dagger_recent': 32                         # default=32, 在dagger中抽取最后value组数据
             },
-    'rollout_buffer':{                                  # Rollout Buffer 参数
-                'n_steps': PPO_param['n_steps'],            # Rollout Buffer 长度
-                'batch_size': PPO_param['mini_batch_size'], # 每次更新时的 Mini-batch 大小
-                'device': 'cpu', 
-                'gamma': 'gamma', 
-                'gae_lambda': 'gae_lambda',},
-    # 训练控制
-    "warm_up_steps": 0,         # PPO通常不需要像SAC那样的预热，设为0即可
-    "mu_init_boundary": 0.1,    # policy的mu层初始化时界限
-    # Loss 权重
-    'loss_weight':{
-        'aux_loss_weight': 0.5,
-        'pos_loss_weight': 1.0,
-        'rot_loss_weight': 1.0,
-        'vel_loss_weight': 1.0,
-        'ang_vel_loss_weight': 1.0,
-        'il_loss_weight': 0.0   # 纯 PPO 暂时不考虑 IL，或者在 Rollout 中混合专家数据(较复杂)
-    },
-}
+            'batch_size': {                             # 定义每个buffer取样数量
+                'expert': 64,                               # expert buffer取样数，用于IL
+                'dagger_old': 32,                           # dagger buffer中，[0:-'dagger_recent']中取样数
+                'dagger_recent': 32                         # 在dagger中抽取最后value组数据
+            },
+            'rollout_buffer':{                          # Rollout Buffer 参数                                                      
+                'device': device,
+                'gamma': 0.99,                              # 折扣因子 
+                'gae_lambda': 0.95,                         # GAE平滑系数, 1为完全蒙特卡洛（高方差，低偏差），0为时序差分(TD)（低方差，高偏差）
+                'seq_len': 8,                               # Recurrent PPO 序列块长度，每个 mini-batch 中的连续时间步数
+            },
+            # Loss 权重
+            'loss_dynamic_change_window': 50000,            # il+rl动态权重机制下，loss的线性变换周期长度
+            'rl_loss_weight_target': 0.8,                   # 线性衰减时rl_loss占比最终值
+            'loss_weight':{
+                'aux_loss_weight': 0.5,                     # 辅助头总损失权重
+                'pos_loss_weight': 1.0,                     # 相对位置损失权重
+                'rot_loss_weight': 1.0,                     # 相对姿态损失权重
+                'vel_loss_weight': 1.0,                     # 相对速度损失权重
+                'ang_vel_loss_weight': 1.0,                 # 相对角速度损失权重
+                'il_loss_weight': 0.0                       # 模仿学习损失权重（纯PPO可设为0）
+            },
+        }
 
 # 无人机动力学模型参数
 UAV_mass=1.0 # 无人机总重量

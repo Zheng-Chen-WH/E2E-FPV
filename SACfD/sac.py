@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam, AdamW
-from utils import soft_update, hard_update, weighted_mse_loss, physics_MSE
+from utils import soft_update, hard_update, six_d_to_rot_mat, physics_MSE
 from model import GaussianPolicy, QNetwork, init_weights
 import torch.nn as nn
 import time
@@ -23,6 +23,7 @@ class SAC(object):
         self.warm_up_steps = SAC_dict['warm_up_steps']
         self.base_lr = SAC_dict['lr']
         self.max_norm_grad = SAC_dict['max_norm_grad']
+        self.chunk_update = SAC_dict['chunk_update']  # 是否使用序列更新及推理时是否每步重置隐藏状态为None
 
         # il与rl损失动态混合机制参数
         self.loss_dynamic_change_window = SAC_dict['loss_dynamic_change_window']
@@ -78,28 +79,6 @@ class SAC(object):
 
     def reset(self): # 为了发挥GRU时序能力，每次训练前要重置GRU的隐藏状态
         self.hidden_state = None
-
-    def six_d_to_rot_mat(self, pred_6d):
-        """将(N, 6)的6D表示转换为(N, 3, 3)的旋转矩阵.
-            
-            这个函数无所谓N 是 B 还是 B*T，它只是独立处理N个样本。
-        
-        Args:
-            pred_6d: (N,6)的6D旋转表示
-        
-        Return:
-            torch.stack([b1, b2, b3], dim=-1) (N,3,3)的旋转矩阵
-        """
-        # 提取列向量
-        a1 = pred_6d[..., 0:3]
-        a2 = pred_6d[..., 3:6]
-        # 格拉姆-施密特正交化
-        b1 = F.normalize(a1, dim=-1)
-        dot_product = torch.sum(b1 * a2, dim=-1, keepdim=True)
-        a2_orthogonal = a2 - dot_product * b1
-        b2 = F.normalize(a2_orthogonal, dim=-1)
-        b3 = torch.cross(b1, b2, dim=-1)
-        return torch.stack([b1, b2, b3], dim=-1)
     
     def aux_loss(self, first_aux_output, second_aux_output, gt_pos, gt_rot_mat, gt_vel, gt_ang_vel): # gr:ground truth
         """根据辅助头输出与实际标签值计算辅助头的多任务学习loss
@@ -132,7 +111,7 @@ class SAC(object):
         # 姿态要转9D旋转矩阵，所以要对批次处理一下
         pred_rot_6d_flat = pred_rot_6d.reshape(-1, 6)
         gt_rot_mat_flat = gt_rot_mat.reshape(-1, 3, 3)
-        R_pred_flat = self.six_d_to_rot_mat(pred_rot_6d_flat)
+        R_pred_flat = six_d_to_rot_mat(pred_rot_6d_flat)
         loss_rot = F.mse_loss(R_pred_flat, gt_rot_mat_flat)
         # print(f"pred_pos:{pred_pos[0:5]}, true_pos:{gt_pos[0:5]}")
         # print(f"pred_rot:{R_pred_flat[0:5]}, true_rot:{gt_rot_mat_flat[0:5]}")
@@ -146,7 +125,7 @@ class SAC(object):
 
         return total_loss
 
-    def select_action(self, img_sequence, state, evaluate=False):
+    def select_action(self, img_sequence, state, V_state, evaluate=False):
         """输入图片序列与目标位置，返回动作；仅用在main.py前向传播中，训练时直接用sample函数
         所以训练时自然而然就有hidden_state总为none
 
@@ -160,14 +139,15 @@ class SAC(object):
         """
         img_sequence=img_sequence.to(self.device)
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+        # print(f"reasoning hidden state used in action selection: {self.hidden_state}")
         if evaluate is False:
             action, _, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state)
         else:
             _, _, action, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
         # 如果使用GRU，更新Agent的隐藏状态，为下一次决策做准备
-        if new_hidden is not None:
+        if new_hidden is not None and self.chunk_update:
             self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
-        return action.detach().cpu().numpy()[0]
+        return action.detach().cpu().numpy()[0], None, None, self.hidden_state # 返回numpy格式的动作，同时对齐PPO接口
 
     def push_data(self, source, data):
         """将经验存入buffer

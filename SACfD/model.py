@@ -509,7 +509,6 @@ class GRU(nn.Module):
         
         # 最终的融合时空特征向量 (取最后一层的最后一个时间步的隐藏状态)
         final_feature_vector = last_hidden_state[-1, :, :]
-        
         return final_feature_vector, gru_aux_predictions, last_hidden_state
 
 
@@ -574,7 +573,7 @@ class GaussianPolicy(nn.Module):
         first_main_feat, first_main_feat_with_time, first_aux_pred = self.image_feature_extractor(img_sequence)
 
         # 输入到动态序列模块
-        features, second_aux_pred, new_hidden_state = self.dynamic_feature_extractor(first_main_feat, first_main_feat_with_time, hidden_state)  # 提取特征张量
+        features, second_aux_pred, new_hidden_state = self.dynamic_feature_extractor.forward(first_main_feat, first_main_feat_with_time, hidden_state)  # 提取特征张量
         concatenated_input = torch.cat([features, state],1) # 拼接特征张量和状态
         
         # 先进行层归一化
@@ -600,7 +599,8 @@ class GaussianPolicy(nn.Module):
         action = y_t * self.action_scale + self.action_bias #不是重参数化，只是单纯把值调整到动作空间范围内
         log_prob = normal.log_prob(x_t)
         # Enforcing Action Bound
-        log_prob -= torch.log((1 - y_t.pow(2)) + epsilon) 
+        log_prob -= torch.log((1 - y_t.pow(2)) + epsilon)
+        log_prob -= torch.log(self.action_scale)  # 添加Scaling雅可比 
         # 原论文(21)式
         #log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + epsilon) #原论文中公式，但是多了个action_scale
         log_prob = log_prob.sum(1, keepdim=True)
@@ -661,7 +661,7 @@ class ValueNetwork(nn.Module):
         # args 包含 state_dim, hidden_sizes, activation
         # 这里复用 model.py 中的 mlp 构建函数
         self.v_net = mlp(
-            [args['state_dim']] + args['hidden_sizes'] + [1],
+            [args['state_dim']] + args['hidden_size'] + [1],
             activation=args['activation']
         )
         
