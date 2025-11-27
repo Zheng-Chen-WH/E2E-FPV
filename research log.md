@@ -420,11 +420,33 @@
     'dagger_recent': 16 # 在dagger中抽取最后16组数据
 }
 ```
-
 + 修改了冗长的main.py；主要修改包括：
   1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
   2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
 + 停用0-10的动作范围，改为-5~5
-
-## xx.xx --cz
-+ 后续修改计划：加上PPO作为可选算法
+## 11.27 --cz
++ **新增PPO算法支持**：在原有SAC框架基础上增加了PPO（Proximal Policy Optimization）算法，特别是适配GRU架构的**Recurrent PPO**实现。
++ **主要功能与代码实现Trick**：
+  + **Recurrent PPO**：为了适配GRU的时序依赖，实现了专用的`RolloutBuffer`。它按时间顺序存储数据，采样时以`seq_len`为长度的**连续序列块（Sequence Chunks）**为单位，并在每个块的开头恢复GRU的`hidden_state`，确保反向传播时梯度的正确性。
+  + **双Buffer机制**：
+    + `RolloutBuffer`：短期、On-Policy Buffer，用于PPO的核心策略更新，支持GAE（Generalized Advantage Estimation）计算。
+    + `ReplayMemory`：长期、Off-Policy Buffer（Expert/DAgger），用于计算辅助的模仿学习（IL）Loss，保留了利用专家数据加速训练的能力。
+  + **算法切换**：在`main.py`中通过`args['rl_algorithm']`参数即可一键切换'SAC'或'PPO'。
+  + **模型切换**：通过修改接口及控制hidden state，实现了不同模块无缝切换
+  + **网络初始化**：针对PPO对策略分布敏感的特性，对Policy网络的输出层进行了特殊初始化（权重接近0），确保初始动作分布均值接近0，方差适中。
++ **参数配置 (`config.py` -> `PPO_param`)**：
+  + `n_steps`: 每次更新前收集的数据步数（Rollout长度）。
+  + `mini_batch_size`: 每次更新采样的序列块数量（注意不是step数）。
+  + `seq_len`: Recurrent PPO中每个序列块的时间步长度。
+  + `ppo_epoch`: 每次收集数据后网络更新的轮数。
+  + `il_loss_weight`: 模仿学习损失权重，可设为0进行纯PPO训练，或大于0进行PPO+IL混合训练。
++ **后续工作**:
+  + **存在问题**:
+    + **SAC偏差**：推理时GRU每个step都会输入上一step的hidden state，具有一定长期记忆能力；但是训练时随机批次选取step，且GRU输入hiddenstate均为None，与推理产生了偏差
+    + **效率问题**：每次PPO更新时，chunk模式都要求GRU前向传播seq_len次，降低了训练速度(PPO雪上加霜)
+  + **SAC偏差解决方案**：
+    + 目前方案：config中SAC param添加chunk update并默认为False，此时GRU每个step均输入None为hidden state，类似光流，仅处理四图像序列
+    + 待办事项：chunk update为true时，SAC更新需要采用类似目前PPO的chunk序列更新模式，保留GRU通过hidden state实现的长期记忆能力
+  + **chunk训练慢解决方案**:
+    + 训练慢是保留序列记忆的代价，可以考虑参考SAC的chunkupdate=False，GRU作用改为类似光流的短序列处理
+    + 或者干脆用TempT当动态特征提取器，彻底摆脱hidden state（但是在笔记本上测试发现因为参数多、单次照片传入多，速度比八次policy前向传播还慢...）

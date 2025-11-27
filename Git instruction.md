@@ -221,6 +221,9 @@ git checkout -b cz
 
 # 推送到远程
 git push github cz
+
+# 如果本地是master:
+git push github master:cz
 ```
 + 创建并切换到本地 cz 分支       
 git fetch会下载远程的更新，并存储在远程跟踪分支（如 github/cz）中，但不会自动合并到工作目录
