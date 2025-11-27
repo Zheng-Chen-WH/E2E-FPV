@@ -3,6 +3,8 @@ import numpy as np
 import os
 import pickle
 from collections import deque
+from torch.utils.data import BatchSampler, SubsetRandomSampler
+import torch
 
 class ReplayMemory:
     def __init__(self, args):
@@ -133,3 +135,111 @@ class ReplayMemory:
             return len(self.buffers[source_name])
         
         return sum(len(buffer) for buffer in self.buffers.values())
+
+class RolloutBuffer:
+    """
+    PPO使用的 Rollout Buffer。
+    存储 (s, a, r, s', done, log_prob, value, aux_targets)
+    并在每次 update 后清空。
+    """
+    def __init__(self, args):
+        self.n_steps = args['n_steps']
+        self.device = args['device']
+        self.gamma = args['gamma']
+        self.gae_lambda = args['gae_lambda']
+        
+        self.reset()
+
+    def reset(self):
+        self.img_seqs = []
+        self.states = []
+        self.actions = []
+        self.rewards = []
+        self.dones = []
+        self.log_probs = []
+        self.values = []
+
+        self.hidden_states = []
+        
+        # 辅助任务的 Ground Truth
+        self.aux_pos = []
+        self.aux_rot = []
+        self.aux_vel = []
+        self.aux_ang_vel = []
+
+    def push(self, data):
+        img_seq, state, action, reward, done, \
+            log_prob, value, pos, rot, vel, ang, hidden_state = data
+        self.img_seqs.append(img_seq)
+        self.states.append(state)
+        self.actions.append(action)
+        self.rewards.append(reward)
+        self.dones.append(done)
+        self.log_probs.append(log_prob)
+        self.values.append(value)
+        
+        # 解包辅助目标
+        self.aux_pos.append(pos)
+        self.aux_rot.append(rot)
+        self.aux_vel.append(vel)
+        self.aux_ang_vel.append(ang)
+
+        self.hidden_states.append(hidden_state)
+
+    def compute_returns_and_advantages(self, last_value, done):
+        """
+        计算 GAE (Generalized Advantage Estimation)
+        """
+        advantages = np.zeros(len(self.rewards))
+        last_gae_lam = 0
+        
+        # 转换为 numpy 方便计算
+        values = np.array(self.values + [last_value]) # 把最后一步的价值加进去方便计算
+        rewards = np.array(self.rewards)
+        dones = np.array(self.dones + [done]) # 同样把最后一步done加进去
+
+        # 逆序计算
+        for t in reversed(range(len(self.rewards))):
+            if t == len(self.rewards) - 1:
+                next_non_terminal = 1.0 - dones[-1]
+                next_value = values[-1]
+            else:
+                next_non_terminal = 1.0 - dones[t + 1]
+                next_value = values[t + 1]
+            
+            delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
+            advantages[t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+        
+        returns = advantages + values[:-1]
+        return returns, advantages
+
+    def get_data_loader(self, mini_batch_size):
+        """
+        将数据转换为 Tensor 并返回一个生成器
+        """
+        # 转换为 Tensor
+        img_seqs = torch.cat(self.img_seqs).to(self.device) # (N, T, C, H, W)
+        states = torch.FloatTensor(np.array(self.states)).to(self.device)
+        actions = torch.FloatTensor(np.array(self.actions)).to(self.device)
+        log_probs = torch.FloatTensor(np.array(self.log_probs)).to(self.device)
+        returns = torch.FloatTensor(np.array(self.returns)).to(self.device)
+        advantages = torch.FloatTensor(np.array(self.advantages)).to(self.device)
+        values = torch.FloatTensor(np.array(self.values)).to(self.device)
+        
+        aux_pos = torch.FloatTensor(np.array(self.aux_pos)).to(self.device)
+        aux_rot = torch.FloatTensor(np.array(self.aux_rot)).to(self.device)
+        aux_vel = torch.FloatTensor(np.array(self.aux_vel)).to(self.device)
+        aux_ang_vel = torch.FloatTensor(np.array(self.aux_ang_vel)).to(self.device)
+
+        dataset_size = len(self.rewards)
+        sampler = BatchSampler(SubsetRandomSampler(range(dataset_size)), mini_batch_size, drop_last=False)
+
+        for indices in sampler:
+            batch_hidden = [self.hidden_states[i] for i in indices]
+            
+            yield (img_seqs[indices], states[indices], actions[indices], 
+                   log_probs[indices], returns[indices], advantages[indices], values[indices],
+                   aux_pos[indices], aux_rot[indices], aux_vel[indices], aux_ang_vel[indices])
+
+    def finish_path(self, last_value, done):
+        self.returns, self.advantages = self.compute_returns_and_advantages(last_value, done)

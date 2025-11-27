@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 from utils import six_d_to_rot_mat, build_sincos_pos_embed
-from functools import partial
 
 LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
@@ -651,3 +650,20 @@ class QNetwork(nn.Module):
         x2 = self.Q_network_2(xu)
         
         return x1, x2
+
+class ValueNetwork(nn.Module):
+    """
+    PPO需要的Value Network (Critic)，估计状态价值 V(s)。
+    结构上模仿 model.py 中的 QNetwork，但输入仅为 state。
+    """
+    def __init__(self, args):
+        super(ValueNetwork, self).__init__()
+        # args 包含 state_dim, hidden_sizes, activation
+        # 这里复用 model.py 中的 mlp 构建函数
+        self.v_net = mlp(
+            [args['state_dim']] + args['hidden_sizes'] + [1],
+            activation=args['activation']
+        )
+        
+    def forward(self, state):
+        return self.v_net(state)

@@ -4,6 +4,7 @@ from CEM_MPC import CEM_MPC
 import numpy as np
 import itertools
 from sac import SAC
+from ppo import PPO
 import time
 from utils import map_value
 import math
@@ -14,9 +15,11 @@ agent_args = {'device': cfg.device, # device
             'critic_param': cfg.critic_param, # Critic (Q)网络构建参数
             'actor_param': cfg.actor_param, # Actor (Pi)网络构建参数
             'SAC_param': cfg.SAC_param, # SAC算法训练参数
+            'PPO_param': cfg.PPO_param, # PPO算法训练参数（主要是为了用到clip参数）
             }
 
 args = { # 本页面中经常修改的参数，改完可以直接在本页面右键运行
+    'rl_algorithm':'SAC', # 强化学习算法选择，SAC or PPO
     'task':'Train', # 测试或训练，Train,Test
     'eval':True, # 训练中是否进行测试 (default: True)
     # 频率相关参数
@@ -45,7 +48,10 @@ env_params = cfg.env_params
 # 初始化
 airsim_environment = env(env_params)
 # Agent
-agent = SAC(agent_args)
+if args['rl_algorithm']=='PPO':
+    agent = PPO(agent_args)
+else:
+    agent = SAC(agent_args)
 MPC_agent = CEM_MPC(cem_hyperparams, mpc_params)
 time_start=time.time()
 '''Tensorboard使用
