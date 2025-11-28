@@ -132,7 +132,7 @@ second_output_dim = 128                                     # 第二模块（GRU
 second_aux_dim = 6                                          # 第二模块辅助头输出维度，相对下一目标的速度+3D角速度 
 actor_param = {"action_dim": ACTION_DIM,                    # 动作网络输出：4个PWM
                "first_module": "ViT",                       # 第一模块类型，ResNet/ViT
-               "second_module": "GRU",                    # 第二模块类型，GRU/TempT
+               "second_module": "TempT",                    # 第二模块类型，GRU/TempT
                "first_aux_dim": first_aux_dim, 
                "second_aux_dim": second_aux_dim,
                "scaled_max_action": SCALED_CONTROL_MAX,     # 缩放后动作上限值

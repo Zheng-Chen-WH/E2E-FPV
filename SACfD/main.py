@@ -20,7 +20,7 @@ agent_args = {'device': cfg.device, # device
 
 args = { # 本页面中经常修改的参数，改完可以直接在本页面右键运行
     'rl_algorithm':'SAC', # 强化学习算法选择，SAC or PPO
-    'task':'Train', # 测试或训练，Train,Test
+    'task':'Test', # 测试或训练，Train,Test
     'eval':True, # 训练中是否进行测试 (default: True)
     # 频率相关参数
     'updates_interval': 1, # total_num_step达到value步后进行一组训练（类似PPO效果）
@@ -35,9 +35,19 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'max_steps': 500, # 每个episode最大步数
     'max_episode': 10000, # 最大训练episode数
     'logs': True, #是否留存训练参数供tensorboard分析
-    'logs_folder': './runs/'
+    'logs_folder': './runs/',
+    'test_episode': 20, # Test模式下回合数
     }
 
+'''
+Model:master_821_23.15_16.966_48.8_model, Test Episodes: 20, Avg. Reward: 10.0323,done num:6
+Model:master_820_13.22_18.2022_65.2_model, Test Episodes: 20, Avg. Reward: 14.5832,done num:8
+Model:master_818_14.69_16.7958_64.2_model, Test Episodes: 20, Avg. Reward: 8.5844,done num:5
+Model:master_806_16.35_18.9271_42.6_model, Test Episodes: 20, Avg. Reward: 7.6985,done num:4
+Model:master_803_13.72_17.3964_43.4_model, Test Episodes: 20, Avg. Reward: -0.3143,done num:1
+Model:master_801_10.47_17.3907_62.4_model, Test Episodes: 20, Avg. Reward: 11.5191,done num:7
+Model:master_800_23.09_17.7076_48.8_model, Test Episodes: 20, Avg. Reward: 4.6048,done num:3
+'''
 # CEM超参数
 cem_hyperparams = cfg.CEM_param
 # MPC参数
@@ -253,8 +263,7 @@ if args['task']=='Test':
     name = args['load_file']
     agent.load_model(name.replace('_model', ''))
     time_start = time.time()
-    episodes = 100
-    test_seeds = [1000000 + i for i in range(episodes)] # 固定测试种子
+    test_seeds = [1000000 + i for i in range(args['test_episode'])] # 固定测试种子
     done_num = 0
     avg_reward = 0
     for iii, seed in enumerate(test_seeds):
@@ -298,9 +307,9 @@ if args['task']=='Test':
                 #     k += 1
                 break
         # print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
-    avg_reward = avg_reward / episodes
+    avg_reward = avg_reward / args['test_episode']
     #writer.add_scalar('avg_reward/test', avg_reward, i_episode)
     time_end=time.time()
     print("----------------------------------------")
-    print(f"Model:{name}, Test Episodes: {episodes}, Avg. Reward: {round(avg_reward, 4)},done num:{done_num}")
+    print(f"Model:{name}, Test Episodes: {args['test_episode']}, Avg. Reward: {round(avg_reward, 4)},done num:{done_num}")
     print("----------------------------------------")
