@@ -36,7 +36,7 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'max_episode': 10000, # 最大训练episode数
     'logs': True, #是否留存训练参数供tensorboard分析
     'logs_folder': './runs/',
-    'test_episode': 20, # Test模式下回合数
+    'test_episode': 100, # Test模式下回合数
     }
 
 '''
@@ -297,14 +297,11 @@ if args['task']=='Test':
             critic_state = next_critic_state
             episode_steps += 1
             avg_reward+=reward
-            if info:
-                success=True
-                done_num+=1
             if done or episode_steps>200:
-                # if episode_steps >= 50:
-                #     model_name = f'master_{k}_{round(episode_reward,2)}_{round(policy_loss,4)}_{episode_steps}'
-                #     agent.save_model(model_name)
-                #     k += 1
+                if info:
+                    success=True
+                    done_num+=1
+                print(f"Episode: {iii+1} succeed: {success} reward:{round(episode_reward, 2)} success rate: {done_num/(iii+1)}")
                 break
         # print(f"Episode: {iii+1}, reward: {round(episode_reward, 2)}, succeed: {info}")
     avg_reward = avg_reward / args['test_episode']

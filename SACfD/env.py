@@ -21,9 +21,8 @@ class env:
         self.client = airsim.MultirotorClient()
         self.client.confirmConnection()
 
-        # 获取当前实际时间并设置为仿真时间
-        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.client.simSetTimeOfDay(True, start_datetime=current_time_str, celestial_clock_speed=1)
+        # 固定仿真时间
+        self.client.simSetTimeOfDay(True, start_datetime="2025-07-08 17:00:00", celestial_clock_speed=0)
 
         self.DT = args['DT'] # 每个step无人机在airsim里自由飞的时长
         self.img_time = args['img_time'] # 两帧之间的间隔
@@ -55,9 +54,8 @@ class env:
         # self.sigma=np.degrees(0.001)
         # self.mu=math.degrees(0.005)
 
-        # TimeSformer拍照帧数
         self.frames= args['frames']
-
+        self.elapsed_time = 0.0
 
         # 图像预处理器
         # 将图像转换为模型可接受的格式，同时调整尺寸
@@ -307,10 +305,11 @@ class env:
             # deviation=0.0 # 不同门框错开
             # elapsed_time = time.time() - self.start_time
             # 等待下一帧
-            time.sleep(self.img_time)
-            self.elapsed_time = self.elapsed_time + self.img_time
+            '''time.sleep(self.img_time)'''
+            self.client.simContinueForTime(self.img_time)
+            self.elapsed_time += self.img_time
             self._update_door_positions(self.elapsed_time) # 更新门位置
-            self.client.simPause(True)
+            '''self.client.simPause(True)'''
             _, _, pos, atti, vel, angular = self.get_drone_state()
             relative_next_target_pos.append(pos)
             attitude_9d.append(atti)
@@ -331,7 +330,7 @@ class env:
                 # 使用预处理将图像转换为张量
                 img_tensor = self.transform(Image.fromarray(img_rgb))
                 img_vector.append(img_tensor)  # 添加到序列
-            self.client.simPause(False)
+            '''self.client.simPause(False)'''
         
         relative_next_target_pos = np.stack(relative_next_target_pos)
         attitude_9d = np.stack(attitude_9d)
@@ -351,6 +350,12 @@ class env:
         if seed is not None:
             np.random.seed(seed)
             # random.seed(seed) # 如果使用了random库
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+            # random.seed(seed) # 如果使用了random库
 
         # AirSim状态重置与初始化
         self.client.simPause(False) # 解除暂停
@@ -358,10 +363,12 @@ class env:
             # print(f"Attempting to reset and initialize drone (Attempt {attempt + 1}/{10})...")
             try:
                 self.client.reset()
-                time.sleep(0.5) # 短暂等待AirSim完成重置，根据需要调整
+                '''time.sleep(0.5)''' # 短暂等待AirSim完成重置，根据需要调整
+                '''self.client.simPause(True)''' 
+
                 self.client.enableApiControl(True)
                 self.client.armDisarm(True)
-                time.sleep(0.5)
+                '''time.sleep(0.5)'''
 
                 # 验证状态
                 if not self.client.isApiControlEnabled():
@@ -379,16 +386,22 @@ class env:
                 time.sleep(1)
         else: # If loop completes without break
             raise RuntimeError("Failed to reset and initialize drone after multiple attempts.")
-
-        # 定义无人机的初始位置和方向
-        # FPV_position=np.array([np.random.uniform(-3,3), np.random.uniform(-5,5), -1.0])
-        # initial_drone_position = airsim.Vector3r(FPV_position[0],FPV_position[1],FPV_position[2])  # 定义位置 (x=10, y=20, z=-0.5)
-        # yaw = math.radians(90)  # 90 度（朝向正 y 轴）
-        # # 创建 Pose 对象
-        # initial_drone_pose = airsim.Pose(initial_drone_position, airsim.to_quaternion(0.0, 0.0, yaw))
-        # # 设置无人机初始位置
-        # self.client.simSetVehiclePose(initial_drone_pose, ignore_collision=True)
         
+        # 设置初始位置 (模拟起飞后的状态，高度 -1.5m，设置初始 Yaw 为 90 度 (math.pi / 2))
+        # 使用 seed 控制的随机数生成器产生微小扰动（如果需要完全固定，可设为0）
+        '''self.client.simPause(True)'''
+        # start_x = 0.0 #np.random.uniform(-0.1, 0.1)
+        # start_y = 0.0 #np.random.uniform(-0.1, 0.1)
+        # start_z = -1.8 
+        # start_pos = airsim.Vector3r(start_x, start_y, start_z)
+        # start_pose = airsim.Pose(start_pos, airsim.to_quaternion(0, 0, np.pi/2))
+        # self.client.simSetVehiclePose(start_pose, ignore_collision=True)
+        # # 稳定机身：发送悬停指令(速度0)并推进物理时间
+        # '''self.client.cancelLastTask()'''
+        # # 这一步确保无人机在开始episode前处于动力学稳定状态，且过程是确定性的
+        # self.client.moveByVelocityAsync(0, 0, 0, duration=10) 
+        # self.client.simContinueForTime(1.0) # 推进1秒仿真时间让无人机稳定
+
         # 航路点与门初始化
         self.waypoints_y = [0.0] # 起点Y位置、各扇门Y位置、终点Y位置
         # self.way_points_y.append(FPV_position[1])
@@ -417,7 +430,8 @@ class env:
             self.door_current_x_positions.append(new_x) 
             self.door_z_positions.append(initial_door_z)
             self.waypoints_y.append(new_y)
-
+        
+        # print(f"seed:{seed},door_position:{self.door_current_x_positions}, {self.waypoints_y}, {self.door_z_positions}")
         self.door_param["initial_x_pos"] = self.door_initial_x_positions
 
         # 最终目标状态初始化
@@ -437,7 +451,9 @@ class env:
         self.client.simSetObjectPose("OrangeBall_Blueprint", airsim.Pose(target_ball_pos, ball_initial_pose.orientation), True)
 
         self.client.takeoffAsync().join()
-        time.sleep(0.5)
+        '''time.sleep(0.5)'''
+        self.client.simPause(True)
+        self.client.simContinueForTime(0.5)
 
         self.start_time = time.time()
         self._update_door_positions(0.0)
@@ -446,7 +462,9 @@ class env:
         self.phase_idx = 0
         self.last_phase_idx = 0
 
-        self.elapsed_time = time.time() - self.start_time
+        '''self.elapsed_time = time.time() - self.start_time'''
+        self.elapsed_time = 0.0
+
         img_tensor, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = self.get_img_sequence() # 获取图像编码张量
         current_drone_state, Q_state, _, _, _, _ = self.get_drone_state()
         self.last_y_pos = current_drone_state[1]
@@ -479,9 +497,9 @@ class env:
         # 发送油门指令
         # end_time=time.time()
         # print("calculation time consumed:", end_time-self.start_time_step)
-        self.client.simPause(False)
+        '''self.client.simPause(False)'''
         # print(f"control signal received by env:{control_signal}")
-        self.client.moveByMotorPWMsAsync(float(control_signal[0]),float(control_signal[1]),float(control_signal[2]),float(control_signal[3]), self.DT*2)
+        self.client.moveByMotorPWMsAsync(float(control_signal[0]),float(control_signal[1]),float(control_signal[2]),float(control_signal[3]), self.DT*10)
         # time.sleep(self.DT-4*self.img_time) # 仿真持续步长
         
         # self.elapsed_time = self.elapsed_time + self.DT - 4 * self.img_time
@@ -490,7 +508,7 @@ class env:
 
         # 往期动作也需要缩放
         # self.past_actions = np.concatenate((self.past_actions[4:], control_signal))
-        self.client.simPause(True)
+        '''self.client.simPause(True)'''
         # self.start_time_step=time.time()
 
         # 基于旧的phase_idx检测是否穿门，再用检测后的Phase_idx计算状态，避免出现phase_idx更新与状态更新异步进而导致势跳变
