@@ -55,7 +55,8 @@ else:
 MPC_agent = CEM_MPC(cem_hyperparams, mpc_params)
 time_start=time.time()
 '''Tensorboard使用
-显示图像：用cmd（不是vscode的终端） cd到具体存放日志的文件夹（runs），然后tensorboard --logdir=./ --samples_per_plugin scalars=999999999
+显示图像：用cmd（不是vscode的终端） cd到具体存放日志的文件夹（runs），conda activate FPV，
+然后tensorboard --logdir=./ --samples_per_plugin scalars=999999999
 或者直接在import的地方点那个启动会话
 如果还是不行的话用netstat -ano | findstr "6006" 在cmd里查一下6006端口有没有占用，用taskkill全杀了之后再tensorboard一下'''
 
@@ -82,7 +83,7 @@ if args['task']=='Train':
         episode_steps = 0
         phase_idx = 0
         current_drone_state, final_target_state, waypoints_y, door_z_positions, door_param,\
-                 img_tensor, critic_state, final_pi_target, elapsed_time, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                 img_tensor, critic_state, final_pi_target, elapsed_time, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset(seed=i_episode)
         MPC_agent.reset(current_drone_state,final_target_state, waypoints_y, door_z_positions, door_param)
         agent.reset()
         while episode_steps <= args['max_steps']:
@@ -189,9 +190,10 @@ if args['task']=='Train':
         if i_episode % args['evaluate_freq'] == 0 and args['eval'] is True and i_episode > 0: # 测试飞行
             avg_reward = 0.
             episodes = args['evaluate_episode']
+            test_seeds = [1000000 + i for i in range(episodes)] # 固定测试种子
             done_num=0
             avg_step = 0
-            for _ in range(episodes):
+            for j, seed in enumerate(test_seeds):
                 episode_reward = 0
                 done=False
                 episode_steps = 0
@@ -199,7 +201,7 @@ if args['task']=='Train':
                 phase_idx = 0
                 current_drone_state, final_target_state, waypoints_y,\
                         door_z_positions, door_param, img_tensor, critic_state, final_pi_target, elapsed_time,\
-                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset(seed=seed)
                 agent.reset()
                 while True:
                     NN_action, _, _, _ = agent.select_action(img_tensor, final_pi_target, critic_state, evaluate=True)  # 开始输出actor网络动作
@@ -252,9 +254,10 @@ if args['task']=='Test':
     agent.load_model(name.replace('_model', ''))
     time_start = time.time()
     episodes = 100
+    test_seeds = [1000000 + i for i in range(episodes)] # 固定测试种子
     done_num = 0
     avg_reward = 0
-    for iii in range(episodes):
+    for iii, seed in enumerate(test_seeds):
         episode_reward = 0
         done=False
         episode_steps = 0
@@ -262,7 +265,7 @@ if args['task']=='Test':
         phase_idx = 0
         current_drone_state, final_target_state, waypoints_y,\
                         door_z_positions, door_param, img_tensor, critic_state, final_pi_target, elapsed_time,\
-                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset()
+                             relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel = airsim_environment.reset(seed=seed)
         agent.reset()
         while True:
             # print(f"true distance:", relative_next_target_pos)

@@ -346,7 +346,12 @@ class env:
 
         return img_vector, relative_next_target_pos, attitude_9d, relative_next_target_vel, fpv_angular_vel
 
-    def reset(self):
+    def reset(self, seed=None):
+        # 设置随机种子
+        if seed is not None:
+            np.random.seed(seed)
+            # random.seed(seed) # 如果使用了random库
+
         # AirSim状态重置与初始化
         self.client.simPause(False) # 解除暂停
         for attempt in range(10):
