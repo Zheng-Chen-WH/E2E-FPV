@@ -451,9 +451,9 @@ class env:
         self.client.simSetObjectPose("OrangeBall_Blueprint", airsim.Pose(target_ball_pos, ball_initial_pose.orientation), True)
 
         self.client.takeoffAsync().join()
-        '''time.sleep(0.5)'''
-        self.client.simPause(True)
+        # time.sleep(0.5)
         self.client.simContinueForTime(0.5)
+        self.client.simPause(True)
 
         self.start_time = time.time()
         self._update_door_positions(0.0)

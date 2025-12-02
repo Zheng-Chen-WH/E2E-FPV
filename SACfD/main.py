@@ -30,24 +30,15 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'expert_freq': 5, # 训练过程中value个episode进行一次纯MPC示范飞行
     'roll_back': False, # 是否一段时间后开始自动回滚
     'LOAD PARA': False, #是否读取参数
-    'load_file': 'master_821_23.15_16.966_48.8_model', # 需要加载的模型，不管是train还是test都在这改
+    'load_file': 'master_721_13.17_17.165_42.0_model', # 需要加载的模型，不管是train还是test都在这改
     'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'max_steps': 500, # 每个episode最大步数
     'max_episode': 10000, # 最大训练episode数
     'logs': True, #是否留存训练参数供tensorboard分析
     'logs_folder': './runs/',
-    'test_episode': 100, # Test模式下回合数
+    'test_episode': 200, # Test模式下回合数
     }
 
-'''
-Model:master_821_23.15_16.966_48.8_model, Test Episodes: 20, Avg. Reward: 10.0323,done num:6
-Model:master_820_13.22_18.2022_65.2_model, Test Episodes: 20, Avg. Reward: 14.5832,done num:8
-Model:master_818_14.69_16.7958_64.2_model, Test Episodes: 20, Avg. Reward: 8.5844,done num:5
-Model:master_806_16.35_18.9271_42.6_model, Test Episodes: 20, Avg. Reward: 7.6985,done num:4
-Model:master_803_13.72_17.3964_43.4_model, Test Episodes: 20, Avg. Reward: -0.3143,done num:1
-Model:master_801_10.47_17.3907_62.4_model, Test Episodes: 20, Avg. Reward: 11.5191,done num:7
-Model:master_800_23.09_17.7076_48.8_model, Test Episodes: 20, Avg. Reward: 4.6048,done num:3
-'''
 # CEM超参数
 cem_hyperparams = cfg.CEM_param
 # MPC参数
