@@ -424,6 +424,7 @@
   1. 如上所述，不再在main.py中定义buffer，而是在sac.py中定义
   2. 停用目前的一个episode中包含1\*expert+5\*dagger的方式，转而采用频率方式，i_episode/freq_expert=0的时候执行expert，其余时候执行dagger;i_episode/freq_eval = 0的时候执行测试
 + 停用0-10的动作范围，改为-5~5
+
 ## 11.27 --cz
 + **新增PPO算法支持**：在原有SAC框架基础上增加了PPO（Proximal Policy Optimization）算法，特别是适配GRU架构的**Recurrent PPO**实现。
 + **主要功能与代码实现Trick**：
@@ -450,3 +451,18 @@
   + **chunk训练慢解决方案**:
     + 训练慢是保留序列记忆的代价，可以考虑参考SAC的chunkupdate=False，GRU作用改为类似光流的短序列处理
     + 或者干脆用TempT当动态特征提取器，彻底摆脱hidden state（但是在笔记本上测试发现因为参数多、单次照片传入多，速度比八次policy前向传播还慢...）
+
+## 11.29 --cz
++ 发现此前训练用的是ViT+TempT，并没有GRU隐状态的问题
++ 动作范围调整到(-1,1)
++ 在MPC和奖励函数中增加了速度矢量对准门中心的项，调整了损失函数和奖励函数系数
++ 门的运动幅度从2米缩到1.5米
++ model.py中的LOG_SIG_MIN从-20提高到-6，避免方差被过度压缩
++ alpha从0.2降到0.1，训练中加入参数打印环节，观察一下loss完全分解后的构成
++ 修改updates时il采样动作，以前为action，现在为mean。原因如下（Gemini解释）：
+  + **方差坍缩 (Variance Collapse)**：
+    + 若使用采样动作计算 IL Loss：$L_{IL} = (\mu + \sigma \cdot \epsilon - a_{expert})^2$。优化器为了消除噪声项 $\sigma \cdot \epsilon$ 以最小化 Loss，会强行将方差 $\sigma$ 推向 0。这导致策略失去随机性，与 SAC 最大化熵的目标冲突。
+  + **使用均值 (Mean) 的优势**：
+    + 若使用确定性均值计算 IL Loss：$L_{IL} = (\mu - a_{expert})^2$。此时 IL Loss 只约束策略的“方向” ($\mu$)，而不约束“探索范围” ($\sigma$)。方差完全交由 SAC 的 Entropy Loss 控制，从而在保证航向正确的同时维持必要的探索能力。 
++ 从每步训练1次改为每10步更新10次
++ reward整体增加了归一化系数（除以5），碰撞惩罚从-5增加到-10，绕门惩罚从-3增加到-5

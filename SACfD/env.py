@@ -142,11 +142,11 @@ class env:
                 if is_x_valid and is_z_valid:
                     # print("成功穿越门1！")
                     # new_phase_idx = 1  # 切换到下一阶段
-                    event_reward = 5  # 给予一次性的里程碑奖励
+                    event_reward = self.reward_weight['GATE_PASS_BONUS']  # 给予一次性的里程碑奖励
                 else:
                     # print("从门1旁边绕过或撞门框！")
                     # 如果没有成功穿越，可以给予一个小的负奖励，或者什么都不做
-                    event_reward = -3
+                    event_reward = self.reward_weight['GATE_BYPASS_PENALTY']
         
         # 检查是否需要从阶段1（目标门2）切换到阶段2
         elif self.phase_idx == 1:
@@ -452,8 +452,8 @@ class env:
 
         self.client.takeoffAsync().join()
         '''time.sleep(0.5)'''
-        self.client.simPause(True)
         self.client.simContinueForTime(0.5)
+        self.client.simPause(True)
 
         self.start_time = time.time()
         self._update_door_positions(0.0)
@@ -574,7 +574,17 @@ class env:
         # print(world_forward_vec, target_direction_vec)
         R_alignment = self.reward_weight['W_ALIGNMENT'] * ((alignment_dot_product + 1.0) / 2.0) # [0,2]
 
-        R_cost = R_action_magnitude + R_body_rate + R_time_cost + R_alignment
+        # 计算速度矢量指向目标中心的奖励
+        current_vel = current_drone_state[3:6]
+        vel_norm = np.linalg.norm(current_vel)
+        R_vel_dir_align = 0.0
+        if vel_norm > 0.1: # 速度太小时方向不稳定，不计算奖励
+            vel_dir = current_vel / vel_norm
+            vel_align_dot = np.dot(vel_dir, target_direction_vec)
+            # 奖励范围 [0, 1] * 权重
+            R_vel_dir_align = self.reward_weight['W_VEL_DIR_ALIGN'] * ((vel_align_dot + 1.0) / 2.0)
+        # print(f"R_vel_dir_align:{R_vel_dir_align:3f},R_alignment:{R_alignment:3f}, R_action_magnitude:{R_action_magnitude:3f}, R_body_rate:{R_body_rate:3f}, R_time_cost:{R_time_cost:3f}")
+        R_cost = R_action_magnitude + R_body_rate + R_time_cost + R_alignment + R_vel_dir_align
 
         # 事件奖励 (R_event)：终止事件
         R_event = 0
@@ -595,7 +605,8 @@ class env:
         # print(f"动作幅度：{R_action_magnitude:3f}, 角速度：{R_body_rate:3f}, 时间：{R_time_cost:3f}, 对准目标:{R_alignment:3f}")
         # print(f"last potential:{self.last_potential:3f}, current_potential:{current_potential:3f}")
         # print(f"进度：{R_progress:3f}, 代价：{R_cost:3f}, 事件：{R_event:3f}, 穿门：{pass_reward:3f}, 目标：{self.phase_idx}")
-        reward = R_progress + R_cost + R_event + pass_reward
+        reward = (R_progress + R_cost + R_event + pass_reward) / self.reward_weight['REWARD_NORMALIZATION']
+        # print(f"reward:{reward:3f}, R_progress:{R_progress:3f}, R_cost:{R_cost:3f}, R_event:{R_event:3f}, pass_reward:{pass_reward:3f}")
 
         # 更新势能值
         if not phase_switched:

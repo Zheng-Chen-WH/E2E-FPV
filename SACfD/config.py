@@ -15,8 +15,8 @@ CONTROL_MAX = 0.73                                          # default:0.66, 最�
 CONTROL_MIN = 0.55                                          # default:0.62, 油门信号下限
 # 穿门任务专用参数
 WAYPOINT_PASS_THRESHOLD_Y = 0.2                             # 判定无人机穿门的阈值
-SCALED_CONTROL_MAX = 5.                                     # 网络输出信号放大以便增大损失函数，对称缩放
-SCALED_CONTROL_MIN = -5.                                    # 网络输出信号放大以便增大损失函数，对称缩放
+SCALED_CONTROL_MAX = 1.                                     # 网络输出信号放大以便增大损失函数，对称缩放
+SCALED_CONTROL_MIN = -1.                                    # 网络输出信号放大以便增大损失函数，对称缩放
 sequence_len = 4                                            # 图像序列长度
 
 # PyTorch设备
@@ -34,27 +34,27 @@ mpc_params = { # MPC参数字典
     'control_max': CONTROL_MAX,
     'control_min': CONTROL_MIN,
     'q_state_matrix_gpu': torch.tensor(np.diag([            # 运行状态代价矩阵
-            250.0, 0.5, 500.0,                              # x,y,z位置
+            450.0, 0.5, 500.0,                              # x,y,z位置
             50.0, 10.0, 100.0,                              # x,y,z速度
             0.0, 0.0, 0.0, 0.0,                             # 姿态, default (10.0, 100.0, 100.0, 100.0)
             100.0, 10.0, 100.0                              # 角速度
             ]), dtype=torch.float32, device=device),
     'r_control_matrix_gpu':R_CONTROL_COST_MATRIX_GPU,
     'q_terminal_matrix_gpu':torch.tensor(np.diag([          # 终端状态代价矩阵
-            250.0, 0.5, 500.0,                              # x,y,z位置
+            450.0, 0.5, 500.0,                              # x,y,z位置
             50.0, 10.0, 100.0,                              # x,y,z速度
             0.0, 0.0, 0.0, 0.0,                             # 姿态, default (10.0, 100.0, 100.0, 100.0)
             100.0, 10.0, 100.0                              # 角速度
             ]), dtype=torch.float32, device=device),
     'q_state_matrix_gpu_two':torch.tensor(np.diag([         # 第二扇门运行状态代价矩阵
-            500.0, 0.5, 300.0,                              # x,y,z位置
+            700.0, 0.5, 300.0,                              # x,y,z位置
             50.0, 5.0, 100.0,                               # x,y,z速度
             0.0, 0.0, 0.0, 0.0,                             # 姿态, default (10.0, 100.0, 100.0, 100.0)
             100.0, 10.0, 100.0                              # 角速度
             ]), dtype=torch.float32, device=device),
     'r_control_matrix_gpu_two':R_CONTROL_COST_MATRIX_GPU,
     'q_terminal_matrix_gpu_two':torch.tensor(np.diag([      # 第二扇门终端状态代价矩阵
-            500.0, 0.5, 300.0,                              # x,y,z位置
+            700.0, 0.5, 300.0,                              # x,y,z位置
             50.0, 5.0, 100.0,                               # x,y,z速度
             0.0, 0.0, 0.0, 0.0,                             # 姿态, default (10.0, 100.0, 100.0, 100.0)
             100.0, 10.0, 100.0                              # 角速度
@@ -76,7 +76,8 @@ mpc_params = { # MPC参数字典
     'state_dim': 13,                                        # MPC输入状态维度
     'device': device,
     'pos_tolerence': POS_TOLERANCE,
-    'align_cost': 500                                       # 鼓励瞄准目标中心飞
+    'align_cost': 300,                                      # 鼓励瞄准目标中心飞
+    'vel_align_cost': 500                                   # 鼓励速度矢量指向目标中心
     }
 
 # CEM参数
@@ -97,7 +98,7 @@ env_params = {'DT': dt,                                     # MPC轨迹每步步
             'door_frames': DOOR_FRAMES,                     # 门框名称列表，在上面的参数处单独修改
             'door_param': {                             # 门的正弦运动参数
                 "num": len(DOOR_FRAMES),
-                "amplitude": 2,                             # 运动幅度（米）
+                "amplitude": 1.5,                             # 运动幅度（米）
                 "frequency": 0.1,                           # 运动频率（Hz）
                 "deviation": None,                          # 两个门的初始相位 (set in reset)
                 "initial_x_pos": None,                      # 门的初始x位置 (set in reset)
@@ -112,8 +113,9 @@ env_params = {'DT': dt,                                     # MPC轨迹每步步
             'control_max': CONTROL_MAX,
             'control_min': CONTROL_MIN,
             'reward_weight': {                          # 奖励函数参数字典
-                'W_POS_PROG': 3.0,                          # 位置接近奖励权重
+                'W_POS_PROG': 1.0,                          # 位置接近奖励权重
                 'W_VEL_ALIGN': 0.5,                         # 速度对齐奖励权重
+                'W_VEL_DIR_ALIGN': 0.1,                     # 速度方向指向目标中心奖励权重
                 'W_FINAL_PULL': 0.5,                        # 一个始终存在的、朝向最终目标的“微弱引力”
                 # 成本惩罚权重
                 'W_ACTION_MAG': 0.05,                       # 控制指令幅度
@@ -122,7 +124,13 @@ env_params = {'DT': dt,                                     # MPC轨迹每步步
                 'W_ALIGNMENT': 0.1,                         # 角度对准
                 # 终端奖励/惩罚
                 'SUCCESS_BONUS': 10,
-                'CRASH_PENALTY': -5}
+                'CRASH_PENALTY': -10,
+                # 奖励归一化分母
+                'REWARD_NORMALIZATION': 5.0,
+                # 穿门
+                'GATE_PASS_BONUS': 5.0,                      # 穿过每个门的奖励
+                'GATE_BYPASS_PENALTY': -5.0,                 # 绕过门的惩罚
+                }
             }
 
 # 神经网络与训练参数
@@ -210,7 +218,7 @@ critic_param = {"state_dim": 21,                            # Q网络状态：�
 
 SAC_param = {"gamma":0.99,                                  # reward长期衰减因数 (default: 0.99)
             'tau':0.01,                                     # 目标网络软更新时的平滑系数(τ) (default: 0.005), 控制新网络在更新目标网络时与旧目标值的融合程度。
-            'alpha':0.2,                                    # 温度系数，控制熵正则项相对Q值重要性 (default: 0.2)
+            'alpha':0.1,                                    # 温度系数，控制熵正则项相对Q值重要性 (default: 0.2)
             'seed':20000323,                                # 网络初始化的时候用的随机数种子
             'mu_init_boundary': 0.1,                        # policy的mu层初始化时界限
             'target_update_interval': 20,                   # 目标网络更新的间隔

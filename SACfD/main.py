@@ -20,11 +20,11 @@ agent_args = {'device': cfg.device, # device
 
 args = { # 本页面中经常修改的参数，改完可以直接在本页面右键运行
     'rl_algorithm':'SAC', # 强化学习算法选择，SAC or PPO
-    'task':'Test', # 测试或训练，Train,Test
+    'task':'Train', # 测试或训练，Train,Test
     'eval':True, # 训练中是否进行测试 (default: True)
     # 频率相关参数
-    'updates_interval': 1, # total_num_step达到value步后进行一组训练（类似PPO效果）
-    'updates_per_episode': 1, # 每步对参数更新的次数
+    'updates_interval': 10, # total_num_step达到value步后进行一组训练（类似PPO效果）
+    'updates_per_episode': 10, # 每次训练对参数更新的次数
     'evaluate_freq': 25, # 训练过程中value个episode之后进行测试;PPO需要大得多的值
     'evaluate_episode': 5, # 训练过程中插入测试的次数
     'expert_freq': 5, # 训练过程中value个episode进行一次纯MPC示范飞行
@@ -39,15 +39,6 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'test_episode': 100, # Test模式下回合数
     }
 
-'''
-Model:master_821_23.15_16.966_48.8_model, Test Episodes: 20, Avg. Reward: 10.0323,done num:6
-Model:master_820_13.22_18.2022_65.2_model, Test Episodes: 20, Avg. Reward: 14.5832,done num:8
-Model:master_818_14.69_16.7958_64.2_model, Test Episodes: 20, Avg. Reward: 8.5844,done num:5
-Model:master_806_16.35_18.9271_42.6_model, Test Episodes: 20, Avg. Reward: 7.6985,done num:4
-Model:master_803_13.72_17.3964_43.4_model, Test Episodes: 20, Avg. Reward: -0.3143,done num:1
-Model:master_801_10.47_17.3907_62.4_model, Test Episodes: 20, Avg. Reward: 11.5191,done num:7
-Model:master_800_23.09_17.7076_48.8_model, Test Episodes: 20, Avg. Reward: 4.6048,done num:3
-'''
 # CEM超参数
 cem_hyperparams = cfg.CEM_param
 # MPC参数
@@ -86,7 +77,7 @@ if args['task']=='Train':
         agent.load_model(args['load_file'], evaluate=False)
         # memory.load_buffer("master")
         
-    for i_episode in itertools.count(0): #itertools.count(1)用于创建一个无限迭代器。它会生成一个连续的整数序列，从0开始，每次递增1。
+    for i_episode in itertools.count(1):
         success = False
         episode_reward = 0
         done = False
@@ -105,7 +96,7 @@ if args['task']=='Train':
             # 把MPC动作映射到神经网络动作空间
             scaled_MPC_action = map_value(MPC_action, mpc_params['control_min'], mpc_params['control_max'], 
                                           agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'])
-            print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
+            # print(f"expert action:{np.round(scaled_MPC_action,4)}, NN action:{np.round(NN_action,4)}")
 
             # 把NN动作映射回MPC动作空间
             rescaled_NN_action = map_value(NN_action, agent_args['actor_param']['scaled_min_action'], agent_args['actor_param']['scaled_max_action'], 
@@ -155,7 +146,6 @@ if args['task']=='Train':
 
             # SAC训练: 每隔固定步数就更新
             if args['rl_algorithm'] == 'SAC' and total_num_steps % args['updates_interval'] == 0:
-                print("training step")
                 for i in range(args['updates_per_episode']):
                     policy_loss, qf_loss, rl_loss, il_loss, aux_loss = agent.update(updates)
                     if args['logs'] == True and policy_loss is not None:

@@ -123,7 +123,7 @@ class SAC(object):
                   self.vel_loss_weight * loss_vel +
                   self.ang_vel_loss_weight * loss_ang_vel)
 
-        return total_loss
+        return total_loss, loss_pos, loss_rot, loss_vel, loss_ang_vel
 
     def select_action(self, img_sequence, state, V_state, evaluate=False):
         """输入图片序列与目标位置，返回动作；仅用在main.py前向传播中，训练时直接用sample函数
@@ -300,11 +300,12 @@ class SAC(object):
         combined_pi_img_batch = torch.cat((il_pi_img_batch, rl_pi_img_batch), dim=0)
         combined_goal_batch = torch.cat((il_goal_batch, rl_goal_batch), dim=0)
         
-        pi, log_pi, _, first_aux_output, second_aux_output, _ = self.policy.sample(combined_pi_img_batch, combined_goal_batch)
+        # 获取 mean (确定性动作) 用于 IL
+        pi, log_pi, mean, first_aux_output, second_aux_output, _ = self.policy.sample(combined_pi_img_batch, combined_goal_batch)
         
         # 分离 IL 和 RL 的输出
         num_il_samples = il_pi_img_batch.shape[0]
-        pi_il = pi[:num_il_samples]
+        pi_il = mean[:num_il_samples] # 使用确定性动作 (Mean) 计算 IL Loss
         pi_rl = pi[num_il_samples:]
         log_pi_rl = log_pi[num_il_samples:]
         
@@ -320,7 +321,7 @@ class SAC(object):
         # first_aux_output和second_aux_output也需要被分离以匹配维度
         first_aux_output = first_aux_output[:num_il_samples] # aux与IL维度相同
         second_aux_output = second_aux_output[:num_il_samples]
-        aux_loss = self.aux_loss(first_aux_output, second_aux_output, aux_pos_batch, aux_att_batch,
+        aux_loss, aux_l_pos, aux_l_rot, aux_l_vel, aux_l_ang = self.aux_loss(first_aux_output, second_aux_output, aux_pos_batch, aux_att_batch,
                                 aux_vel_batch, aux_ang_batch)
 
         # 动态权重调整
@@ -334,19 +335,30 @@ class SAC(object):
 
         # Alpha Loss
         alpha_loss = torch.tensor(0.).to(self.device)
-        alpha_tlogs = torch.tensor(self.alpha)
         if self.automatic_entropy_tuning:
             alpha_loss = -(self.alpha * (log_pi_rl.detach() + self.target_entropy)).mean()
             self.alpha_optim.zero_grad()
             alpha_loss.backward()
             self.alpha_optim.step()
-            alpha_tlogs = self.alpha.clone()
 
         # 更新Target Network
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
 
-        print(f"RL weight:{w_rl:.2f}, Q:{qf_loss.item():.4f}, RL:{rl_loss.item():.4f}, IL:{il_loss.item():.4f}, Aux:{aux_loss.item():.4f}")
+        # 详细打印loss
+        if updates % 10 == 0:
+            # 计算一些额外的统计量用于打印
+            q_val = min_qf_pi.mean().item()
+            entropy_term = (-self.alpha * log_pi_rl).mean().item()
+            avg_reward = reward_batch.mean().item()
+            avg_target_q = target_q_value.mean().item()
+            
+            print(f"| Upd: {updates:5d} | Tot: {total_policy_loss.item():6.2f} | Q_Loss: {qf_loss.item():6.2f} | "
+                  f"RL: {rl_loss.item():6.2f} | IL: {il_loss.item():6.2f} | Aux: {aux_loss.item():6.2f} |\n"
+                  f"|> RL_Detail | Q_Val: {q_val:6.2f} | Ent_Term: {entropy_term:6.2f} | Alpha: {self.alpha:.3f} | Ent: {-log_pi_rl.mean().item():.2f} |\n"
+                  f"|> Critic_Det| Pred_Q: {qf1.mean().item():6.2f} | Targ_Q: {avg_target_q:6.2f} | Avg_R: {avg_reward:6.2f} |\n"
+                  f"|> Aux_Detail| Pos: {aux_l_pos.item():.3f} | Rot: {aux_l_rot.item():.3f} | Vel: {aux_l_vel.item():.3f} | Ang: {aux_l_ang.item():.3f} |\n"
+                  f"|> Weights   | W_RL: {w_rl:.2f} | W_IL: {(1 - w_rl) * self.il_weight:.2f} |")
         
         return total_policy_loss.item(), qf_loss.item(), rl_loss.item(), il_loss.item(), aux_loss.item()
 

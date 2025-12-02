@@ -61,6 +61,7 @@ class CEM_MPC():
         self.mean_control_sequence_warm_start = np.zeros((self.prediction_horizon, self.action_dim))
         self.pos_tolerence = mpc_params['pos_tolerence']
         self.align_cost = mpc_params['align_cost']
+        self.vel_align_cost = mpc_params['vel_align_cost']
      
         # 记录轨迹画图用
         # actual_trajectory_log = [current_true_state.copy()]
@@ -179,9 +180,37 @@ class CEM_MPC():
         # alignment_costs: (K,)
         alignment_costs = self.align_cost * torch.sum(alignment_errors, dim=1)
 
+        # 新增速度矢量对准代价计算
+        # pred_velocities: (K, H, 3)
+        pred_velocities = running_predicted_states[:, :, 3:6]
+        
+        # 计算预测速度的模长
+        pred_vel_norms = torch.norm(pred_velocities, dim=-1, keepdim=True)
+        
+        # 归一化预测速度向量 (避免除以零)
+        pred_vel_directions = pred_velocities / (pred_vel_norms + 1e-6)
+        
+        # target_direction_vectors 已经在上面计算过了: (K, H, 3) 指向目标的单位向量
+        
+        # 计算速度方向与目标方向的点积
+        vel_dot_products = torch.sum(pred_vel_directions * target_direction_vectors, dim=-1)
+        
+        # 速度对准误差，代价是 1 - 点积
+        vel_alignment_errors = 1.0 - vel_dot_products
+        
+        # 只有当速度大于一定阈值时才计算方向代价，防止悬停时方向抖动导致的误差
+        # 创建掩码: 速度 > 0.1 m/s
+        vel_mask = (pred_vel_norms.squeeze(-1) > 0.1).float()
+        
+        # 应用掩码
+        vel_alignment_errors = vel_alignment_errors * vel_mask
+        
+        # 求和得到总代价
+        vel_alignment_costs = self.vel_align_cost * torch.sum(vel_alignment_errors, dim=1)
+
         # 总成本
 
-        total_costs_batch = state_costs + control_costs + terminal_costs + alignment_costs
+        total_costs_batch = state_costs + control_costs + terminal_costs + alignment_costs + vel_alignment_costs
         # print(alignment_costs)
         return total_costs_batch
 
