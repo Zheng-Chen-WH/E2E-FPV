@@ -616,7 +616,7 @@ class GaussianPolicy(nn.Module):
             print(f"pred angular:", gru_output[..., 3:6])
             print("-------------------------------------------------------")
             
-        return action, log_prob, mean, resnet_output, gru_output, new_hidden_state # 辅助头输出分别是（B,T,9）和（B,T,6）
+        return action, log_prob, mean, std, resnet_output, gru_output, new_hidden_state # 辅助头输出分别是（B,T,9）和（B,T,6）
 
     def to(self, device):
         self.action_scale = self.action_scale.to(device)

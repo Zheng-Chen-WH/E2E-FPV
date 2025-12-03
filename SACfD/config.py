@@ -222,7 +222,7 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
             'seed':20000323,                                # 网络初始化的时候用的随机数种子
             'mu_init_boundary': 0.1,                        # policy的mu层初始化时界限
             'target_update_interval': 20,                   # 目标网络更新的间隔
-            'automatic_entropy_tuning': False,              # 自动调整温度系数alpha (default: False)
+            'automatic_entropy_tuning': True,              # 自动调整温度系数alpha (default: False)
             'chunk_update': False,                           # 是否使用序列更新，如果使用GRU且想维持长期记忆就需要True；TempT和短序列GRU都为False（否则与现在的buffer不匹配）
             'warm_up_steps': 100000,                        # 学习率预热，在这些updates内学习率线性提升到设定的lr值
             'lr': 1e-4,                                     # 学习率 (default: 0.0003)

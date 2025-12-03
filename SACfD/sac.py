@@ -63,19 +63,26 @@ class SAC(object):
         if self.automatic_entropy_tuning is True:
             # self.target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(self.device)).item() #torch.prod()是一个函数，用于计算张量中所有元素的乘积
             self.target_entropy = - SAC_dict['action_dim'] # 对于一维动作空间向量，目标值就是这个
-            self.alpha = torch.zeros(1, requires_grad=True, device=self.device) #原论文没用log，但是这里用的，总之先改成无log状态试试
-            #self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device) #初始化log_alpha
-            self.alpha_optim = Adam([self.alpha], lr=self.base_lr)
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device) #初始化log_alpha
+            self.alpha = self.log_alpha.exp()
+            self.alpha_optim = Adam([self.log_alpha], lr=self.base_lr)
+        else:
+            self.alpha = SAC_dict['alpha']
 
         # 定义并初始化policy
         self.policy = GaussianPolicy(args['actor_param']).to(self.device)
         self.policy.apply(init_weights)  
         nn.init.constant_(self.policy.log_std_layer.weight, 0)
-        nn.init.constant_(self.policy.log_std_layer.bias, 0)
+        nn.init.constant_(self.policy.log_std_layer.bias, -1.5) #让初始log_std偏小一些
         nn.init.uniform_(self.policy.mu_layer.weight, - SAC_dict['mu_init_boundary'], SAC_dict['mu_init_boundary']) 
         nn.init.uniform_(self.policy.mu_layer.bias, - SAC_dict['mu_init_boundary'], SAC_dict['mu_init_boundary'])
         self.policy_optim = AdamW(self.policy.parameters(), self.base_lr, weight_decay = 0.01)
         self.hidden_state = None
+
+        if self.automatic_entropy_tuning:
+            self.alpha_t = self.alpha
+        else:
+            self.alpha_t = torch.tensor(self.alpha).to(self.device)
 
     def reset(self): # 为了发挥GRU时序能力，每次训练前要重置GRU的隐藏状态
         self.hidden_state = None
@@ -141,9 +148,9 @@ class SAC(object):
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
         # print(f"reasoning hidden state used in action selection: {self.hidden_state}")
         if evaluate is False:
-            action, _, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state)
+            action, _, _, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state)
         else:
-            _, _, action, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
+            _, _, action, _, _, _, new_hidden = self.policy.sample(img_sequence, state, self.hidden_state) #如果evaluate为True，输出的动作是网络的mean经过squash的结果
         # 如果使用GRU，更新Agent的隐藏状态，为下一次决策做准备
         if new_hidden is not None and self.chunk_update:
             self.hidden_state = new_hidden.detach() # 使用 detach() 避免梯度累积
@@ -274,13 +281,13 @@ class SAC(object):
             # 应用到 Policy 优化器
             for param_group in self.policy_optim.param_groups:
                 param_group['lr'] = current_lr
-        
+
         # Critic Loss
         with torch.no_grad():
-            next_state_action, next_state_log_pi, _, _, _, _ = self.policy.sample(next_pi_img_batch, next_goal_batch)
+            next_state_action, next_state_log_pi, _, _, _, _, _ = self.policy.sample(next_pi_img_batch, next_goal_batch)
             qf1_next_target, qf2_next_target = self.critic_target(next_q_state_batch, next_state_action)
             min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
-            target_q_value = reward_batch + (1 - done_batch) * self.gamma * (min_qf_next_target - self.alpha * next_state_log_pi)
+            target_q_value = reward_batch + (1 - done_batch) * self.gamma * (min_qf_next_target - self.alpha_t * next_state_log_pi)
         qf1, qf2 = self.critic(q_state_batch, action_batch)
         # print(f"min_qf_next_target:{torch.mean(min_qf_next_target)}")
         # print(f"reward:{torch.mean(rl_reward_batch)}, target_q_value:{torch.mean(target_q_value)}, qf1:{torch.mean(qf1)}, qf2:{torch.mean(qf2)}") 
@@ -301,7 +308,7 @@ class SAC(object):
         combined_goal_batch = torch.cat((il_goal_batch, rl_goal_batch), dim=0)
         
         # 获取 mean (确定性动作) 用于 IL
-        pi, log_pi, mean, first_aux_output, second_aux_output, _ = self.policy.sample(combined_pi_img_batch, combined_goal_batch)
+        pi, log_pi, mean, std, first_aux_output, second_aux_output, _ = self.policy.sample(combined_pi_img_batch, combined_goal_batch)
         
         # 分离 IL 和 RL 的输出
         num_il_samples = il_pi_img_batch.shape[0]
@@ -315,7 +322,7 @@ class SAC(object):
         # RL Loss
         qf1_pi, qf2_pi = self.critic(rl_q_state_for_policy_batch, pi_rl)
         min_qf_pi = torch.min(qf1_pi, qf2_pi)
-        rl_loss = ((self.alpha * log_pi_rl) - min_qf_pi).mean()
+        rl_loss = ((self.alpha_t.detach() * log_pi_rl) - min_qf_pi).mean()
         
         # Aux Loss
         # first_aux_output和second_aux_output也需要被分离以匹配维度
@@ -336,16 +343,24 @@ class SAC(object):
         # Alpha Loss
         alpha_loss = torch.tensor(0.).to(self.device)
         if self.automatic_entropy_tuning:
-            alpha_loss = -(self.alpha * (log_pi_rl.detach() + self.target_entropy)).mean()
+            alpha_loss = -(self.log_alpha * (log_pi_rl.detach() + self.target_entropy)).mean()
             self.alpha_optim.zero_grad()
             alpha_loss.backward()
             self.alpha_optim.step()
+            self.alpha = self.log_alpha.exp()
+            self.alpha_t = self.alpha.clone()
+        else:
+            self.alpha_t = torch.tensor(self.alpha).to(self.device)
 
         # 更新Target Network
         if updates % self.target_update_interval == 0:
             soft_update(self.critic_target, self.critic, self.tau)
 
         # 详细打印loss
+        if isinstance(self.alpha, torch.Tensor):
+            alpha_val = self.alpha.item()
+        else:
+            alpha_val = self.alpha
         if updates % 10 == 0:
             # 计算一些额外的统计量用于打印
             q_val = min_qf_pi.mean().item()
@@ -353,12 +368,18 @@ class SAC(object):
             avg_reward = reward_batch.mean().item()
             avg_target_q = target_q_value.mean().item()
             
+            # 计算方差的均值
+            avg_std = std.mean().item()
+
+            
             print(f"| Upd: {updates:5d} | Tot: {total_policy_loss.item():6.2f} | Q_Loss: {qf_loss.item():6.2f} | "
                   f"RL: {rl_loss.item():6.2f} | IL: {il_loss.item():6.2f} | Aux: {aux_loss.item():6.2f} |\n"
-                  f"|> RL_Detail | Q_Val: {q_val:6.2f} | Ent_Term: {entropy_term:6.2f} | Alpha: {self.alpha:.3f} | Ent: {-log_pi_rl.mean().item():.2f} |\n"
+                  f"|> RL_Detail | Q_Val: {q_val:6.2f} | Ent_Term: {entropy_term:6.2f} | Alpha: {alpha_val:.3f} | Ent: {-log_pi_rl.mean().item():.2f} |\n"
                   f"|> Critic_Det| Pred_Q: {qf1.mean().item():6.2f} | Targ_Q: {avg_target_q:6.2f} | Avg_R: {avg_reward:6.2f} |\n"
                   f"|> Aux_Detail| Pos: {aux_l_pos.item():.3f} | Rot: {aux_l_rot.item():.3f} | Vel: {aux_l_vel.item():.3f} | Ang: {aux_l_ang.item():.3f} |\n"
-                  f"|> Weights   | W_RL: {w_rl:.2f} | W_IL: {(1 - w_rl) * self.il_weight:.2f} |")
+                  f"|> Weights   | W_RL: {w_rl:.2f} | W_IL: {(1 - w_rl) * self.il_weight:.2f} |\n"
+                  f"|> Std       | Avg_Std: {avg_std:.3f} |\n"
+                  "---------------------------------------------------------------")
         
         return total_policy_loss.item(), qf_loss.item(), rl_loss.item(), il_loss.item(), aux_loss.item()
 
