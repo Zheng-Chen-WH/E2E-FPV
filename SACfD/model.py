@@ -5,7 +5,7 @@ from torch.distributions import Normal
 from utils import six_d_to_rot_mat, build_sincos_pos_embed
 
 LOG_SIG_MAX = 2
-LOG_SIG_MIN = -20
+LOG_SIG_MIN = -6
 epsilon = 1e-6
 
 def init_weights(m):
