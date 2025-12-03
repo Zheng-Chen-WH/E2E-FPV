@@ -8,8 +8,8 @@ dt = 0.1                                                    # MPC轨迹每步步
    N=1000时为0.005-0.007s
    N=10000时为0.009s左右
    网络每次train耗时大约0.003s"""
-POS_TOLERANCE = 1.5                                         # 判定抵达目标的位置误差限 (meters)
-VELO_TOLERANCE = 1                                          # 判定抵达目标的速度误差限 (m/s)
+POS_TOLERANCE = 2                                         # 判定抵达目标的位置误差限 (meters)
+VELO_TOLERANCE = 10                                          # 判定抵达目标的速度误差限 (m/s)
 ACTION_DIM = 4                                              # 动作为4个PWM值
 CONTROL_MAX = 0.73                                          # default:0.66, 最大控制指令范围（simpleflight为速度范围，PX4为加速度，现在是油门信号）
 CONTROL_MIN = 0.55                                          # default:0.62, 油门信号下限
@@ -248,7 +248,7 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
                 'rot_loss_weight': 1.0,                     # 相对姿态损失权重
                 'vel_loss_weight': 1.0,                     # 相对速度损失权重
                 'ang_vel_loss_weight': 1.0,                 # 相对角速度损失权重
-                'il_loss_weight': 2.0                       # 模仿学习损失权重，用于调整量级
+                'il_loss_weight': 5.0                       # 模仿学习损失权重，用于调整量级
                 },
             }
 

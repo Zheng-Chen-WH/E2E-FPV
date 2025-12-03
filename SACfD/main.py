@@ -77,7 +77,7 @@ if args['task']=='Train':
         agent.load_model(args['load_file'], evaluate=False)
         # memory.load_buffer("master")
         
-    for i_episode in itertools.count(1):
+    for i_episode in itertools.count(0):
         success = False
         episode_reward = 0
         done = False
