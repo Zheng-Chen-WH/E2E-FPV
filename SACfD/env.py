@@ -49,7 +49,6 @@ class env:
 
         self.last_y_pos = 0.0
         self.last_potential = 0
-
         # 正态分布噪声
         # self.sigma=np.degrees(0.001)
         # self.mu=math.degrees(0.005)
@@ -147,6 +146,8 @@ class env:
                     # print("从门1旁边绕过或撞门框！")
                     # 如果没有成功穿越，可以给予一个小的负奖励，或者什么都不做
                     event_reward = self.reward_weight['GATE_BYPASS_PENALTY']
+                    self.done = True
+                    self.info=0
         
         # 检查是否需要从阶段1（目标门2）切换到阶段2
         elif self.phase_idx == 1:
@@ -166,10 +167,14 @@ class env:
                 if is_x_valid and is_z_valid:
                     # print("成功穿越门2！")
                     # new_phase_idx = 2  # 切换到最终目标阶段
-                    event_reward = 5  # 再次给予奖励
+                    event_reward = self.reward_weight['SUCCESS_BONUS']  # 再次给予奖励
+                    self.done = True
+                    self.info=1
                 else:
                     # print("从门2旁边绕过或撞门框！")
-                    event_reward = -3
+                    self.done = True
+                    self.info=0
+                    event_reward = self.reward_weight['GATE_BYPASS_PENALTY']
         
         # 更新上一步的Y坐标，为下一次检测做准备
         self.last_y_pos = current_y
@@ -587,19 +592,30 @@ class env:
         R_cost = R_action_magnitude + R_body_rate + R_time_cost + R_alignment + R_vel_dir_align
 
         # 事件奖励 (R_event)：终止事件
-        R_event = 0
+        # R_event = 0
+        # if collided:
+        #     R_event = self.reward_weight['CRASH_PENALTY']
+        #     self.done = True
+        #     self.info=0
+        #     self.i+=1
+        # elif dist_to_final_target * 10 < self.target_distance:
+        #     R_event = self.reward_weight['SUCCESS_BONUS']
+        #     self.done = True
+        #     self.info=1
+        #     self.i+=1
+
         if collided:
             R_event = self.reward_weight['CRASH_PENALTY']
             self.done = True
             self.info=0
-            self.i+=1
-        elif dist_to_final_target * 10 < self.target_distance:
-            R_event = self.reward_weight['SUCCESS_BONUS']
-            self.done = True
-            self.info=1
-            self.i+=1
 
-
+        R_event = 0
+        if self.done:
+            self.i+=1
+            if self.info:
+                R_event = self.reward_weight['SUCCESS_BONUS']
+            else:
+                R_event = self.reward_weight['CRASH_PENALTY']
         # 最终总奖励
         # print(f"位置进度：{- self.reward_weight['W_POS_PROG'] * dist_next_target:3f}, 速度匹配：{- self.reward_weight['W_VEL_ALIGN'] * vel_to_next_target:3f}, 最终进度：{- self.reward_weight['W_FINAL_PULL'] * dist_to_final_target:3f}")
         # print(f"动作幅度：{R_action_magnitude:3f}, 角速度：{R_body_rate:3f}, 时间：{R_time_cost:3f}, 对准目标:{R_alignment:3f}")
