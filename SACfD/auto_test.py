@@ -1,24 +1,19 @@
 """
 自动扫描模型文件：根据命名模式 master_{k}_{avg_reward}_{policy_loss}_{avg_step}_model.pt 扫描所有 .pt 文件
 
-智能筛选：
-
-从文件名解析 avg_reward
-avg_reward < 1 的模型直接删除
-avg_reward >= 1 的模型加入测试队列
-批量测试：按 avg_reward 从高到低依次测试每个模型
+1. 从文件名解析 avg_reward
+2. avg_reward < 阈值 的模型直接删除
+3. avg_reward >= 阈值 的模型加入测试队列
+4. 批量测试：按 avg_reward 从高到低依次测试每个模型
 
 结果保存：所有测试结果保存到 ./test_results/test_results_{时间戳}.txt
-
 可配置参数（在文件开头的 TEST_CONFIG 字典中）：
-
 参数	默认值	说明
 test_episode	50	每个模型测试轮数
 max_steps_per_episode	200	每轮最大步数
 avg_reward_threshold	1.0	删除阈值
 delete_low_reward	True	是否删除低奖励模型
 dry_run	False	干跑模式（只打印不删除）
-    main()
 """
 
 import config as cfg
@@ -33,7 +28,6 @@ import glob
 import re
 from datetime import datetime
 
-# ==================== 可配置参数 ====================
 TEST_CONFIG = {
     'test_episode': 50,           # 每个模型测试的轮数
     'max_steps_per_episode': 200, # 每轮最大步数
@@ -45,7 +39,7 @@ TEST_CONFIG = {
     'dry_run': False,             # 干跑模式：True时只打印要删除的文件，不实际删除
 }
 
-# 超参数字典（与 main.py 保持一致）
+# 超参数字典
 agent_args = {
     'device': cfg.device,
     'critic_param': cfg.critic_param,
@@ -58,7 +52,6 @@ agent_args = {
 mpc_params = cfg.mpc_params
 # env参数
 env_params = cfg.env_params
-
 
 def parse_model_filename(filename):
     """
@@ -75,8 +68,8 @@ def parse_model_filename(filename):
     base_name = filename.replace('_model.pt', '')
     
     # 使用正则表达式匹配
-    # 格式: master_{k}_{avg_reward}_{policy_loss}_{avg_step}
-    # 注意: avg_reward, policy_loss 可能为负数
+    # master_{k}_{avg_reward}_{policy_loss}_{avg_step}
+    # avg_reward, policy_loss 可能为负数
     pattern = r'^master_(\d+)_([-]?\d+\.?\d*)_([-]?\d+\.?\d*)_([-]?\d+\.?\d*)$'
     match = re.match(pattern, base_name)
     
@@ -102,7 +95,6 @@ def parse_model_filename(filename):
     
     return None
 
-
 def get_all_model_files(directory='.', pattern='master_*_model.pt'):
     """
     获取目录下所有符合模式的模型文件
@@ -115,6 +107,13 @@ def get_all_model_files(directory='.', pattern='master_*_model.pt'):
         list: 模型文件路径列表
     """
     search_path = os.path.join(directory, pattern)
+    '''glob.glob 是 Python 标准库中用于文件路径模式匹配的函数，返回所有匹配的文件路径列表
+    通配符	含义	                     示例
+    *	   匹配任意字符（不跨目录）	      *.py → 所有 .py 文件
+    ?	   匹配单个字符	                 file?.txt → file1.txt, fileA.txt
+    [...]  匹配字符集	                 file[0-9].txt → file0.txt ~ file9.txt
+    **	   递归匹配所有子目录	          **/*.py（需设置 recursive=True）
+    '''
     return glob.glob(search_path)
 
 
@@ -226,9 +225,7 @@ def test_model(agent, airsim_environment, model_name, test_episodes, max_steps, 
         'elapsed_time': elapsed_time,
         'episode_results': episode_results
     }
-    
     return result
-
 
 def write_result_to_log(log_file, result, model_info):
     """
