@@ -31,11 +31,10 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'roll_back': False, # 是否一段时间后开始自动回滚
     'LOAD PARA': False, #是否读取参数
     'load_file': 'master_721_13.17_17.165_42.0_model', # 需要加载的模型，不管是train还是test都在这改
-    'max_episodes':1e6, #测试算法（eval=False）情况下的总步数
     'max_steps': 500, # 每个episode最大步数
-    'max_episode': 10000, # 最大训练episode数
+    'max_updates': 300000, # 最大训练update数
     'logs': True, #是否留存训练参数供tensorboard分析
-    'logs_folder': './runs/',
+    'logs_folder': './runs/ablation_no_aux/', # tensorboard日志存放位置
     'test_episode': 200, # Test模式下回合数
     }
 
@@ -241,6 +240,11 @@ if args['task']=='Train':
             if i_episode > 100 and (i_episode % (args['evaluate_freq'] * 20) == 0) and os.path.isfile("best_master_model.pt"): # 大于100轮之后，每20个模型重新加载一次
                 agent.load_model("best_master", evaluate=False)
 
+        if updates >= args['max_updates']:
+            print("训练结束，达到最大更新次数{}".format(args['max_updates']))
+            if args['logs']==True:
+                writer.close()
+            break
         '''if i_episode == args['max_episode']:
         # if len(memory) == args['replay_size']: # 生成数据集
             # memory.save_buffer("master")
