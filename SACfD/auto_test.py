@@ -250,10 +250,10 @@ def write_result_to_log(log_file, result, model_info):
         log_file.write(f"平均步数: {round(result['avg_steps'], 2)}\n")
         log_file.write(f"测试耗时: {round(result['elapsed_time'], 2)}秒\n")
         log_file.write("-" * 70 + '\n')
-        log_file.write("各轮详情:\n")
-        for ep in result['episode_results']:
-            log_file.write(f"  Episode {ep['episode']}: reward={round(ep['reward'], 2)}, "
-                          f"steps={ep['steps']}, success={ep['success']}\n")
+        # log_file.write("各轮详情:\n")
+        # for ep in result['episode_results']:
+        #     log_file.write(f"  Episode {ep['episode']}: reward={round(ep['reward'], 2)}, "
+        #                   f"steps={ep['steps']}, success={ep['success']}\n")
     
     log_file.write("=" * 70 + '\n\n')
     log_file.flush()  # 立即写入磁盘
