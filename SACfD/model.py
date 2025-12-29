@@ -431,6 +431,158 @@ class TemporalTransformer(nn.Module):
 
         return main_output, aux_output_dynamics, None
 
+class TCN(nn.Module):
+    """
+    Temporal Convolutional Network (TCN) 模型。
+    - 使用因果卷积和膨胀卷积处理时序信息
+    - 有辅助头预测速度/角速度
+    - 最终输出一个融合时空信息的特征向量
+    """
+    def __init__(self, args):
+        """
+        Args:
+            args (dict): 包含以下参数：
+                - input_dim: 输入特征维度
+                - num_channels: 每层TCN的通道数列表，例如[64, 128, 256]
+                - kernel_size: 卷积核大小
+                - dropout: dropout比例
+                - aux_out_dim: 辅助输出维度
+        """
+        super(TCN, self).__init__()
+        
+        layers = []
+        num_levels = len(args["num_channels"])
+        
+        for i in range(num_levels):
+            dilation_size = 2 ** i  # 膨胀率呈指数增长
+            in_channels = args["input_dim"] if i == 0 else args["num_channels"][i-1]
+            out_channels = args["num_channels"][i]
+            
+            layers.append(
+                TemporalBlock(
+                    in_channels,
+                    out_channels,
+                    args["kernel_size"],
+                    stride=1,
+                    dilation=dilation_size,
+                    padding=(args["kernel_size"]-1) * dilation_size,
+                    dropout=args["dropout"]
+                )
+            )
+        
+        self.network = nn.Sequential(*layers)
+        
+        # 全局池化层，将序列特征聚合为单个特征向量
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+        
+        # 辅助头：用于预测速度/角速度
+        self.aux_head = nn.Sequential(
+            nn.Linear(args["num_channels"][-1], 128),
+            nn.ReLU(),
+            nn.Linear(128, args["aux_out_dim"])
+        )
+        
+        # 输出投影层，将TCN输出维度统一
+        self.output_projection = nn.Linear(args["num_channels"][-1], args["num_channels"][-1])
+
+    def forward(self, input, input_with_time, hidden_state=None):
+        """
+        Args:
+            input: 原始输入特征 (B, T, D)
+            input_with_time: 带时间位置编码的输入 (B, T, D)
+            hidden_state: TCN不需要隐藏状态，为了接口统一保留此参数
+        
+        Returns:
+            final_feature_vector: 最终特征向量 (B, D_out)
+            aux_predictions: 辅助预测 (B, T, aux_dim)
+            None: TCN无隐藏状态，返回None保持接口一致
+        """
+        # TCN使用带时间编码的输入
+        x = input_with_time  # (B, T, D)
+        
+        # TCN期望输入格式为 (B, D, T)，需要转置
+        x = x.transpose(1, 2)  # (B, D, T)
+        
+        # 通过TCN层
+        x = self.network(x)  # (B, D_out, T)
+        
+        # 转回 (B, T, D_out) 用于辅助头
+        x_for_aux = x.transpose(1, 2)  # (B, T, D_out)
+        aux_predictions = self.aux_head(x_for_aux)  # (B, T, aux_dim)
+        
+        # 全局平均池化得到最终特征向量
+        pooled = self.adaptive_pool(x).squeeze(-1)  # (B, D_out)
+        final_feature_vector = self.output_projection(pooled)  # (B, D_out)
+        
+        return final_feature_vector, aux_predictions, None
+
+
+class TemporalBlock(nn.Module):
+    """
+    TCN的基本构建块，包含因果卷积、残差连接和dropout
+    """
+    def __init__(self, in_channels, out_channels, kernel_size, stride, dilation, padding, dropout=0.2):
+        super(TemporalBlock, self).__init__()
+        
+        # 第一个因果卷积层
+        self.conv1 = nn.Conv1d(
+            in_channels, out_channels, kernel_size,
+            stride=stride, padding=padding, dilation=dilation
+        )
+        self.chomp1 = Chomp1d(padding)  # 移除padding带来的未来信息
+        self.relu1 = nn.ReLU()
+        self.dropout1 = nn.Dropout(dropout)
+        
+        # 第二个因果卷积层
+        self.conv2 = nn.Conv1d(
+            out_channels, out_channels, kernel_size,
+            stride=stride, padding=padding, dilation=dilation
+        )
+        self.chomp2 = Chomp1d(padding)
+        self.relu2 = nn.ReLU()
+        self.dropout2 = nn.Dropout(dropout)
+        
+        # 组合网络
+        self.net = nn.Sequential(
+            self.conv1, self.chomp1, self.relu1, self.dropout1,
+            self.conv2, self.chomp2, self.relu2, self.dropout2
+        )
+        
+        # 残差连接的投影层（如果输入输出维度不同）
+        self.downsample = nn.Conv1d(in_channels, out_channels, 1) if in_channels != out_channels else None
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        """
+        Args:
+            x: 输入张量 (B, in_channels, T)
+        Returns:
+            out: 输出张量 (B, out_channels, T)
+        """
+        out = self.net(x)
+        res = x if self.downsample is None else self.downsample(x)
+        return self.relu(out + res)
+
+
+class Chomp1d(nn.Module):
+    """
+    裁剪层，用于移除因果卷积中padding带来的未来信息
+    确保网络只能看到过去和当前的信息，不能看到未来
+    """
+    def __init__(self, chomp_size):
+        super(Chomp1d, self).__init__()
+        self.chomp_size = chomp_size
+        
+    def forward(self, x):
+        """
+        Args:
+            x: 输入张量 (B, C, T)
+        Returns:
+            裁剪后的张量 (B, C, T-chomp_size)
+        """
+        return x[:, :, :-self.chomp_size].contiguous()
+
+
 class GRU(nn.Module):
     """
     GRU模型。
@@ -547,6 +699,8 @@ class GaussianPolicy(nn.Module):
             self.dynamic_feature_extractor = GRU(args['GRU'])
         elif args['second_module'] == "TempT":
             self.dynamic_feature_extractor = TemporalTransformer(args["TemporalTransformer"])
+        elif args['second_module'] == "TCN":
+            self.dynamic_feature_extractor = TCN(args["TCN"])
         
 
         MLP_dict = args['MLP']

@@ -207,6 +207,13 @@ actor_param = {"action_dim": ACTION_DIM,                    # 动作网络输出
                     "activation": 'relu',                   # 激活函数，或者gelu
                     "batch_first": True,                    # 设定输入和输出张量的维度顺序为(Batch, Seq, Dim)
                     "norm_first": True,                     # Pre-Layer Normalization，在自注意力层和FFN之前进行层归一化，能更稳定一些
+                    },
+                "TCN":{                                     # 时序卷积网络参数
+                    "input_dim": first_output_dim,          # 输入特征维度（第一模块输出）
+                    "num_channels": [128, 256, second_output_dim],  # 每层TCN的通道数，最后一层输出维度与second_output_dim对齐
+                    "kernel_size": 3,                       # 卷积核大小，通常为3或5
+                    "dropout": 0.2,                         # dropout比例
+                    "aux_out_dim": second_aux_dim,          # 辅助输出维度
                     }
                } 
 
