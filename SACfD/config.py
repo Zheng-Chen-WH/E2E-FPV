@@ -243,7 +243,7 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
                 'dagger_recent': 32                         # default=32, 在dagger中抽取最后value组数据
             },
             'loss_weight':{                             # 损失函数权重
-                'aux_loss_weight': 0.0,                     # 辅助头总损失权重
+                'aux_loss_weight': 0.5,                     # (default = 0.5) 辅助头总损失权重
                 'pos_loss_weight': 1.0,                     # 相对位置损失权重
                 'rot_loss_weight': 1.0,                     # 相对姿态损失权重
                 'vel_loss_weight': 1.0,                     # 相对速度损失权重
@@ -293,7 +293,7 @@ PPO_param = {
             'loss_dynamic_change_window': 50000,            # il+rl动态权重机制下，loss的线性变换周期长度
             'rl_loss_weight_target': 0.8,                   # 线性衰减时rl_loss占比最终值
             'loss_weight':{
-                'aux_loss_weight': 0.5,                     # 辅助头总损失权重
+                'aux_loss_weight': 0.5,                     # (default = 0.5) 辅助头总损失权重
                 'pos_loss_weight': 1.0,                     # 相对位置损失权重
                 'rot_loss_weight': 1.0,                     # 相对姿态损失权重
                 'vel_loss_weight': 1.0,                     # 相对速度损失权重
