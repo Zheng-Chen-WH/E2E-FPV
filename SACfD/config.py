@@ -228,19 +228,19 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
             'alpha':0.1,                                    # 温度系数，控制熵正则项相对Q值重要性 (default: 0.2)
             'seed':20000323,                                # 网络初始化的时候用的随机数种子
             'mu_init_boundary': 0.1,                        # policy的mu层初始化时界限
-            'target_update_interval': 50,                   # 目标网络更新的间隔
+            'target_update_interval': 20,                   # 目标网络更新的间隔
             'automatic_entropy_tuning': True,              # 自动调整温度系数alpha (default: False)
             'chunk_update': False,                           # 是否使用序列更新，如果使用GRU且想维持长期记忆就需要True；TempT和短序列GRU都为False（否则与现在的buffer不匹配）
-            'warm_up_steps': 30000,                         # (default=100000) 学习率预热，在这些updates内学习率线性提升到设定的lr值
-            'lr': 3e-4,                                     # 学习率 (default: 0.0001)
+            'warm_up_steps': 100000,                         # (default=100000) 学习率预热，在这些updates内学习率线性提升到设定的lr值
+            'lr': 1e-4,                                     # 学习率 (default: 0.0001)
             'action_dim': ACTION_DIM,                       # 动作维度
-            'loss_dynamic_change_window': 150000,           # (default=500000) il+rl动态权重机制下，loss的线性变换周期长度
+            'loss_dynamic_change_window': 500000,           # (default=500000) il+rl动态权重机制下，loss的线性变换周期长度
             'rl_loss_weight_target': 0.8,                   # 线性衰减时rl_loss占比最终值
             'max_norm_grad': 1.0,                           # default=1.0, 梯度裁剪阈值，当计算出的梯度范数超过这个值时，所有梯度会被等比例缩放 
             'buffer_param':{
                 'buffer_configs':{                      # 定义memory结构
-                    'expert': 10000,                        # (default=15000) 纯粹收集MPC示范过程的数据，实际执行MPC动作
-                    'dagger': 10000                         # (default=15000) 收集dagger过程的数据，现在同时收集NN和MPC动作了，实际执行NN动作
+                    'expert': 15000,                        # (default=15000) 纯粹收集MPC示范过程的数据，实际执行MPC动作
+                    'dagger': 15000                         # (default=15000) 收集dagger过程的数据，现在同时收集NN和MPC动作了，实际执行NN动作
                     }, 
                 'recent_size': 32                           # 定义“最近期数据池”范围
                 },
@@ -250,7 +250,7 @@ SAC_param = {"gamma":0.99,                                  # reward长期衰减
                 'dagger_recent': 32                         # default=32, 在dagger中抽取最后value组数据
             },
             'loss_weight':{                             # 损失函数权重
-                'aux_loss_weight': 0.5,                     # (default = 0.5) 辅助头总损失权重
+                'aux_loss_weight': 0.0,                     # (default = 0.5) 辅助头总损失权重
                 'pos_loss_weight': 1.0,                     # 相对位置损失权重
                 'rot_loss_weight': 1.0,                     # 相对姿态损失权重
                 'vel_loss_weight': 1.0,                     # 相对速度损失权重

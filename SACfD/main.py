@@ -32,7 +32,7 @@ args = { # 本页面中经常修改的参数，改完可以直接在本页面右
     'LOAD PARA': False, #是否读取参数
     'load_file': 'master_721_13.17_17.165_42.0_model', # 需要加载的模型，不管是train还是test都在这改
     'max_steps': 500, # 每个episode最大步数
-    'max_updates': 300000, # 最大训练update数
+    'max_updates': 1000000, # 最大训练update数
     'logs': True, #是否留存训练参数供tensorboard分析
     'logs_folder': './runs/ablation_no_aux/', # tensorboard日志存放位置
     'test_episode': 200, # Test模式下回合数
