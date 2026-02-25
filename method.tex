@@ -1,0 +1,228 @@
+\section{Methodology}
+\label{sec:methodology}
+% The overall system of XXX is illustrated in Fig. \ref{fig:System overview}. We aim to achieve efficiency and economy simultaneously in drone flights. \textcolor{red}{Our robots }
+The agile flight task is formulated as a partially observable Markov decision process (POMDP) where the objective is to navigate through a sequence of dynamic gates while minimizing traversal time. The drone perceives the environment solely through a monocular RGB camera, and the learned policy network utilizes egocentric visual observations $\mathbf{o}_t$ to output low-level control commands $\mathbf{a}_t = [c, \omega_x, \omega_y, \omega_z]^\top$, where $c$ represents collective thrust and $\boldsymbol{\omega}$ denotes body rates.
+
+Our approach integrates imitation learning (IL) and reinforcement learning (RL) through a unified training framework with dynamic loss weighting. Unlike conventional two-stage approaches that pre-train with IL before fine-tuning with RL, we simultaneously collect expert demonstrations and policy rollouts, dynamically adjusting the balance between IL and RL objectives throughout training. This enables the policy to leverage the sample efficiency of expert guidance while gradually gaining the ability to surpass expert performance through environment interactions.
+
+\subsection{Hybrid Data Collection}
+\label{sec:data_collection}
+
+We maintain a hybrid data collection strategy that interleaves expert demonstrations with policy rollouts. Every $f$ episodes (where $f$ is the expert frequency), the drone is controlled by a Cross-Entropy Method based Model Predictive Controller (CEM-MPC) serving as the expert policy $\pi_{\text{expert}}$. In remaining episodes, the neural network policy $\pi_{\boldsymbol{\theta}}$ is executed, enabling the collection of on-policy experience.
+
+\subsubsection{Expert Policy (CEM-MPC)}
+
+The MPC policy processes full state observations $\mathbf{s}_t = [\mathbf{p}^\top, \mathbf{v}^\top, \mathbf{R}^\top, \boldsymbol{\omega}^\top, \mathbf{d}^\top]^\top$, where $\mathbf{p}, \mathbf{v} \in \mathbb{R}^3$ denote position and velocity, $\mathbf{R} \in SO(3)$ denotes orientation, $\boldsymbol{\omega} \in \mathbb{R}^3$ denotes angular velocity, and $\mathbf{d} \in \mathbb{R}^3$ represents the relative position to the next gate. The CEM-MPC solves the following optimization at each timestep:
+\begin{equation}
+\mathbf{a}_t^* = \arg\min_{\mathbf{a}_{t:t+N}} \sum_{k=0}^{N-1} \left( \mathbf{s}_{t+k}^\top \mathbf{Q} \mathbf{s}_{t+k} + \mathbf{a}_{t+k}^\top \mathbf{R} \mathbf{a}_{t+k} \right) + \mathbf{s}_{t+N}^\top \mathbf{Q}_f \mathbf{s}_{t+N},
+\label{eq:mpc}
+\end{equation}
+where $\mathbf{Q}$, $\mathbf{R}$, and $\mathbf{Q}_f$ are state cost, control cost, and terminal cost matrices, respectively, and $N$ is the prediction horizon.
+
+\subsubsection{Hybrid Replay Buffer}
+
+We maintain two replay buffers with distinct purposes:
+\begin{itemize}
+    \item \textbf{Expert buffer} $\mathcal{B}_{\text{expert}}$: Stores transitions collected during MPC episodes, where the executed action is $\mathbf{a}_{\text{MPC}}$.
+    \item \textbf{DAgger buffer} $\mathcal{B}_{\text{dagger}}$: Stores transitions from both MPC and NN policy episodes, where both the NN action $\mathbf{a}_{\text{NN}}$ and the MPC query action $\mathbf{a}_{\text{MPC}}$ are recorded.
+\end{itemize}
+
+During each environment step, transitions are stored in both buffers:
+\begin{equation}
+(\mathbf{o}, \mathbf{s}, \mathbf{a}_{\text{MPC}}, \mathbf{a}_{\text{NN}}, \mathbf{o}', \mathbf{s}', r, d, \mathbf{g}, \mathbf{y}_{\text{aux}}) \rightarrow \{\mathcal{B}_{\text{expert}}, \mathcal{B}_{\text{dagger}}\},
+\end{equation}
+where $\mathbf{y}_{\text{aux}}$ denotes auxiliary task labels (relative pose, velocity, and angular velocity).
+
+During training, we sample mini-batches with a hybrid strategy:
+\begin{equation}
+\mathcal{B}_{\text{batch}} = \text{Sample}(\mathcal{B}_{\text{expert}}, N_e) \cup \text{Sample}(\mathcal{B}_{\text{dagger}}^{\text{old}}, N_o) \cup \text{Sample}(\mathcal{B}_{\text{dagger}}^{\text{recent}}, N_r),
+\label{eq:buffer}
+\end{equation}
+where recent samples are drawn from the tail of the DAgger buffer to prioritize recent experience. This sampling strategy ensures diversity while emphasizing recent policy behavior.
+
+\subsection{Policy Network Architecture}
+\label{sec:architecture}
+
+The vision-based policy $\pi_{\boldsymbol{\theta}}$ takes a sequence of visual observations $[\mathbf{o}_{t-H+1}, \ldots, \mathbf{o}_t]$ as input, where $H$ denotes the history length. The network adopts a three-module architecture:
+
+\subsubsection{Perception Module}
+
+Extracts spatial features from individual frames. We implement two variants:
+\begin{itemize}
+    \item \textit{ResNet-based encoder}: Comprises residual blocks with batch normalization and adaptive average pooling, outputting feature vectors of dimension $d_1$.
+    \item \textit{Vision Transformer (ViT)}: Splits images into patches, applies linear projection, and processes through transformer encoder layers with multi-head self-attention.
+\end{itemize}
+The perception module outputs frame-wise features $\mathbf{f}_t \in \mathbb{R}^{d_1}$ and provides auxiliary predictions of relative pose $\hat{\mathbf{y}}_t^{\text{pose}} = [\hat{\mathbf{p}}_r^\top, \hat{\mathbf{R}}_r^\top]^\top \in \mathbb{R}^9$ (3D position + 6D rotation) through a dedicated auxiliary head.
+
+\subsubsection{Temporal Module}
+
+Aggregates temporal information from the feature sequence. We support three architectures:
+\begin{itemize}
+    \item \textit{Gated Recurrent Unit (GRU)}: Processes the sequence recurrently, outputting the final hidden state $\mathbf{h}_T \in \mathbb{R}^{d_2}$.
+    \item \textit{Temporal Transformer}: Appends a learnable summary token and applies self-attention over the temporal dimension.
+    \item \textit{Temporal Convolutional Network (TCN)}: Employs dilated causal convolutions with residual connections.
+\end{itemize}
+This module provides auxiliary predictions of relative velocity and angular velocity $\hat{\mathbf{y}}_t^{\text{dyn}} = [\hat{\mathbf{v}}_r^\top, \hat{\boldsymbol{\omega}}_r^\top]^\top \in \mathbb{R}^6$.
+
+\subsubsection{Control Module}
+
+A multi-layer perceptron (MLP) concatenates the temporal feature vector with the goal position $\mathbf{g} \in \mathbb{R}^3$ and outputs the mean $\boldsymbol{\mu}$ and log-standard deviation $\log \boldsymbol{\sigma}$ of a Gaussian policy:
+\begin{equation}
+\boldsymbol{\mu}, \log \boldsymbol{\sigma} = \text{MLP}([\mathbf{h}_T; \mathbf{g}]).
+\label{eq:mlp}
+\end{equation}
+Actions are sampled using the reparameterization trick with tanh squashing for bounded action spaces.
+
+\subsection{Dynamic Loss Weighting for IL-RL Integration}
+\label{sec:dynamic_weighting}
+
+The key innovation of our approach is the dynamic integration of imitation learning and reinforcement learning through a unified loss function with time-varying weights. Unlike sequential pre-training and fine-tuning, our method seamlessly blends both objectives throughout training.
+
+\subsubsection{Imitation Learning Loss}
+
+The IL objective minimizes the mean squared error between the policy output and expert (MPC) actions. For each sampled transition, we construct the IL loss using the expert action label:
+\begin{equation}
+\mathcal{L}_{\text{IL}}(\boldsymbol{\theta}) = \mathbb{E}_{(\mathbf{o}, \mathbf{g}, \mathbf{a}_{\text{MPC}}) \sim \mathcal{B}_{\text{batch}}} \left[ \| \boldsymbol{\mu}_{\boldsymbol{\theta}}(\mathbf{o}, \mathbf{g}) - \mathbf{a}_{\text{MPC}} \|^2 \right],
+\label{eq:il_loss}
+\end{equation}
+where the expectation is taken over all samples from both expert and DAgger buffers, as both contain expert action labels.
+
+\subsubsection{Reinforcement Learning Loss}
+
+The RL objective follows the Soft Actor-Critic (SAC) framework~\cite{haarnoja2018soft} with entropy regularization. The policy loss is:
+\begin{equation}
+\mathcal{L}_{\text{RL}}(\boldsymbol{\theta}) = \mathbb{E}_{\mathbf{s}_t \sim \mathcal{B}_{\text{dagger}}} \left[ \alpha \log \pi_{\boldsymbol{\theta}}(\mathbf{a}_t \mid \mathbf{s}_t) - Q_{\boldsymbol{\phi}}(\mathbf{s}_t, \mathbf{a}_t) \right],
+\label{eq:rl_loss}
+\end{equation}
+where $\alpha > 0$ is the temperature parameter, and the expectation is taken only from DAgger buffer samples (i.e., states visited by the policy). The log-probability accounts for the tanh squashing function:
+\begin{equation}
+\log \pi_{\boldsymbol{\theta}}(\mathbf{a} \mid \mathbf{s}) = \log \mathcal{N}(\boldsymbol{\epsilon}; \mathbf{0}, \mathbf{I}) - \sum_{i=1}^{d} \log(1 - \tanh^2(z_i)) - \sum_{i=1}^{d} \log \frac{\text{high}_i - \text{low}_i}{2},
+\label{eq:logprob}
+\end{equation}
+where $\mathbf{z} = \boldsymbol{\mu}_{\boldsymbol{\theta}} + \boldsymbol{\sigma}_{\boldsymbol{\theta}} \odot \boldsymbol{\epsilon}$ and $\boldsymbol{\epsilon} \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$.
+
+\subsubsection{Asymmetric Critic}
+
+We employ an asymmetric actor-critic architecture~\cite{pinto2017asymmetric} where the critic receives privileged state information while the actor uses only visual observations. The twin Q-networks $Q_{\boldsymbol{\phi}_1}$, $Q_{\boldsymbol{\phi}_2}$ minimize the Bellman error:
+\begin{equation}
+\mathcal{L}_Q(\boldsymbol{\phi}) = \mathbb{E}_{(\mathbf{s}, \mathbf{a}, r, \mathbf{s}') \sim \mathcal{B}_{\text{batch}}} \left[ \left( Q_{\boldsymbol{\phi}}(\mathbf{s}, \mathbf{a}) - y \right)^2 \right],
+\label{eq:critic_loss}
+\end{equation}
+with the target value:
+\begin{equation}
+y = r + \gamma (1 - d) \left( \min_{i=1,2} Q_{\bar{\boldsymbol{\phi}}_i}(\mathbf{s}', \mathbf{a}') - \alpha \log \pi_{\boldsymbol{\theta}}(\mathbf{a}' \mid \mathbf{s}') \right),
+\label{eq:target}
+\end{equation}
+where $\mathbf{a}' \sim \pi_{\boldsymbol{\theta}}(\cdot \mid \mathbf{s}')$ and $Q_{\bar{\boldsymbol{\phi}}}$ denotes the target network updated via soft interpolation:
+\begin{equation}
+\bar{\boldsymbol{\phi}} \leftarrow \tau \boldsymbol{\phi} + (1 - \tau) \bar{\boldsymbol{\phi}}.
+\label{eq:soft_update}
+\end{equation}
+
+Notably, the critic is trained on all transitions (both expert and DAgger), using the actually executed action ($\mathbf{a}_{\text{MPC}}$ for expert data, $\mathbf{a}_{\text{NN}}$ for DAgger data):
+\begin{equation}
+\mathbf{a}_{\text{critic}} = \begin{cases}
+\mathbf{a}_{\text{MPC}} & \text{if } s \in \mathcal{B}_{\text{expert}} \\
+\mathbf{a}_{\text{NN}} & \text{if } s \in \mathcal{B}_{\text{dagger}}
+\end{cases}
+\end{equation}
+
+\subsubsection{Dynamic Loss Weighting Schedule}
+
+The combined policy loss integrates IL, RL, and auxiliary objectives with dynamic weighting:
+\begin{equation}
+\mathcal{L}_{\text{policy}} = w_{\text{RL}}(k) \cdot \mathcal{L}_{\text{RL}} + (1 - w_{\text{RL}}(k)) \cdot w_{\text{IL}} \cdot \mathcal{L}_{\text{IL}} + w_{\text{aux}} \cdot \mathcal{L}_{\text{aux}},
+\label{eq:dynamic_loss}
+\end{equation}
+where $k$ denotes the update step, $w_{\text{IL}}$ is a fixed scaling factor for the IL loss, and the RL weight $w_{\text{RL}}(k)$ follows a linear schedule:
+\begin{equation}
+w_{\text{RL}}(k) = \min\left(1, \frac{k}{K_{\text{window}}}\right) \cdot w_{\text{RL}}^{\text{target}}.
+\label{eq:weight_schedule}
+\end{equation}
+
+Here, $K_{\text{window}}$ is the transition window size controlling the speed of IL-to-RL transition, and $w_{\text{RL}}^{\text{target}}$ is the final RL weight (typically $< 1$ to maintain some IL guidance). This annealing strategy ensures that early training benefits from strong expert guidance while gradually allowing the policy to explore and improve beyond the expert through RL.
+
+\subsubsection{Auxiliary Task Learning}
+
+To enhance representation learning, we incorporate auxiliary tasks predicting physical quantities from visual observations:
+\begin{equation}
+\mathcal{L}_{\text{aux}} = w_p \mathcal{L}_{\text{pos}} + w_r \mathcal{L}_{\text{rot}} + w_v \mathcal{L}_{\text{vel}} + w_{\omega} \mathcal{L}_{\text{ang}},
+\label{eq:aux_loss}
+\end{equation}
+where each component is computed as:
+\begin{align}
+\mathcal{L}_{\text{pos}} &= \frac{1}{T} \sum_{t=1}^T \| \hat{\mathbf{p}}_r^{(t)} - \mathbf{p}_r^{(t)} \|^2, \\
+\mathcal{L}_{\text{rot}} &= \frac{1}{T} \sum_{t=1}^T \| \hat{\mathbf{R}}_r^{(t)} - \mathbf{R}_r^{(t)} \|_F^2, \\
+\mathcal{L}_{\text{vel}} &= \frac{1}{T} \sum_{t=1}^T \| \hat{\mathbf{v}}_r^{(t)} - \mathbf{v}_r^{(t)} \|^2, \\
+\mathcal{L}_{\text{ang}} &= \frac{1}{T} \sum_{t=1}^T \| \hat{\boldsymbol{\omega}}_r^{(t)} - \boldsymbol{\omega}_r^{(t)} \|^2.
+\end{align}
+For rotation representation, we employ the 6D continuous representation~\cite{zhou2019continuity} to avoid discontinuities associated with Euler angles or quaternions.
+
+\subsection{Reward Design}
+
+The reward function at time $t$ comprises multiple components:
+\begin{equation}
+r_t = r_{\text{prog}} + r_{\text{align}} + r_{\text{vel}} + r_{\text{act}} + r_{\text{body}} + r_{\text{time}} + r_{\text{terminal}},
+\label{eq:reward}
+\end{equation}
+where:
+\begin{itemize}
+    \item $r_{\text{prog}} = w_1 \cdot \Delta d_{\text{gate}}$: Progress reward based on distance reduction to the next gate.
+    \item $r_{\text{align}} = w_2 \cdot (\mathbf{v} \cdot \mathbf{d}_{\text{target}} / \|\mathbf{d}_{\text{target}}\|)$: Velocity alignment with target direction.
+    \item $r_{\text{vel}} = w_3 \cdot \mathbf{v} \cdot \mathbf{d}_{\text{target}}$: Velocity projection toward target.
+    \item $r_{\text{act}} = -w_4 \cdot \|\mathbf{a}\|^2$: Control magnitude penalty.
+    \item $r_{\text{body}} = -w_5 \cdot \|\boldsymbol{\omega}\|^2$: Body rate penalty to reduce motion blur.
+    \item $r_{\text{time}} = -w_6$: Constant time cost to encourage faster flight.
+    \item $r_{\text{terminal}}$: Success bonus or crash penalty at episode termination.
+\end{itemize}
+
+\subsection{Training Algorithm}
+
+The complete training procedure is summarized in Algorithm~\ref{alg:training}. Unlike conventional approaches that separate IL pre-training from RL fine-tuning, our method simultaneously collects expert and on-policy data, dynamically adjusting the IL-RL loss balance throughout training.
+
+\begin{algorithm}[!t]
+\caption{Simultaneous IL-RL Training with Dynamic Loss Weighting}
+\label{alg:training}
+\begin{algorithmic}[1]
+\REQUIRE Expert policy $\pi_{\text{expert}}$, initial parameters $\boldsymbol{\theta}, \boldsymbol{\phi}$, loss weights, transition window $K_{\text{window}}$
+\STATE Initialize buffers $\mathcal{B}_{\text{expert}}, \mathcal{B}_{\text{dagger}}$, target networks $\bar{\boldsymbol{\phi}} \leftarrow \boldsymbol{\phi}$
+\FOR{episode $= 1, 2, \ldots$}
+    \STATE Reset environment, $\mathbf{h}_0 \leftarrow \mathbf{0}$
+    \IF{episode mod expert\_freq $= 0$}
+        \STATE Execute $\pi_{\text{expert}}$, store $(\mathbf{o}, \mathbf{s}, \mathbf{a}_{\text{MPC}}, \mathbf{a}_{\text{NN}}, \ldots)$ in both buffers
+    \ELSE
+        \STATE Execute $\pi_{\boldsymbol{\theta}}$, query $\pi_{\text{expert}}$ for $\mathbf{a}_{\text{MPC}}$, store in both buffers
+    \ENDIF
+    \FOR{each environment step}
+        \IF{total\_steps mod update\_interval $= 0$}
+            \FOR{$i = 1$ to updates\_per\_episode}
+                \STATE Sample batch via Eq.~\ref{eq:buffer}
+                \STATE Compute dynamic weight $w_{\text{RL}}(k)$ via Eq.~\ref{eq:weight_schedule}
+                \STATE Compute critic action: $\mathbf{a}_{\text{critic}} = \mathbb{I}_{\text{expert}} \cdot \mathbf{a}_{\text{MPC}} + (1 - \mathbb{I}_{\text{expert}}) \cdot \mathbf{a}_{\text{NN}}$
+                \STATE Update critic via Eq.~\ref{eq:critic_loss}--\ref{eq:target}
+                \STATE Update policy via Eq.~\ref{eq:dynamic_loss} (IL on all data, RL on DAgger only)
+                \STATE Update temperature $\alpha$
+                \STATE Soft update targets via Eq.~\ref{eq:soft_update}, $k \leftarrow k + 1$
+            \ENDFOR
+        \ENDIF
+    \ENDFOR
+\ENDFOR
+\RETURN Optimized policy $\boldsymbol{\theta}^*$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Implementation Details}
+
+\textbf{Learning Rate Warm-up:} To stabilize early training, we employ a linear learning rate warm-up:
+\begin{equation}
+\eta_k = \eta_{\text{base}} \cdot \min\left(1, \frac{k}{K_{\text{warm}}}\right).
+\end{equation}
+
+\textbf{Gradient Clipping:} We apply gradient clipping with maximum norm $c_{\text{max}}$ to prevent exploding gradients:
+\begin{equation}
+\mathbf{g} \leftarrow \frac{\mathbf{g}}{\max(1, \|\mathbf{g}\|_2 / c_{\text{max}})}.
+\end{equation}
+
+\textbf{Weight Initialization:} We employ task-specific strategies: Kaiming initialization for convolutional layers, orthogonal initialization for recurrent weights, and Xavier uniform for transformer projections. The policy output layers use bounded uniform initialization to ensure reasonable initial action variance.
+
+\textbf{Automatic Entropy Tuning:} The temperature parameter $\alpha$ can be automatically adjusted to achieve a target entropy $\mathcal{H}_{\text{target}} = -\dim(\mathcal{A})$, eliminating the need for manual tuning.

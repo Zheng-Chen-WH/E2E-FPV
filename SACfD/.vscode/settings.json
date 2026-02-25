@@ -1,0 +1,105 @@
+{
+    // LaTeX Workshop 配置
+    "latex-workshop.latex.outDir": "%DIR%",
+    
+    // 主文件设置
+    "latex-workshop.latex.rootFile.doNotPrompt": true,
+    "latex-workshop.latex.rootFile.useSubFile": false,
+
+    // 设置 LaTeX 编译器路径
+    "latex-workshop.latex.tools": [
+        {
+            "name": "pdflatex",
+            "command": "C:\\Users\\Dendrobium\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\pdflatex.exe",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "--enable-installer",
+                "%DOC%"
+            ]
+        },
+        {
+            "name": "bibtex",
+            "command": "C:\\Users\\Dendrobium\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\bibtex.exe",
+            "args": [
+                "%DOCFILE%"
+            ]
+        },
+        {
+            "name": "latexmk",
+            "command": "C:\\Users\\Dendrobium\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\latexmk.exe",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-pdf",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ]
+        }
+    ],
+    
+    // 编译方案（recipes）
+    "latex-workshop.latex.recipes": [
+        {
+            "name": "pdflatex ➜ bibtex ➜ pdflatex × 2",
+            "tools": [
+                "pdflatex",
+                "bibtex",
+                "pdflatex",
+                "pdflatex"
+            ]
+        },
+        {
+            "name": "pdflatex",
+            "tools": [
+                "pdflatex"
+            ]
+        },
+        {
+            "name": "latexmk",
+            "tools": [
+                "latexmk"
+            ]
+        }
+    ],
+    
+    // 默认使用第一个 recipe
+    "latex-workshop.latex.recipe.default": "first",
+    
+    // 保存时自动编译
+    "latex-workshop.latex.autoBuild.run": "onSave",
+    
+    // PDF 预览设置
+    "latex-workshop.view.pdf.viewer": "tab",
+    
+    // SyncTeX 正向/反向搜索
+    "latex-workshop.synctex.afterBuild.enabled": true,
+    
+    // 清理辅助文件
+    "latex-workshop.latex.clean.fileTypes": [
+        "*.aux",
+        "*.bbl",
+        "*.blg",
+        "*.idx",
+        "*.ind",
+        "*.lof",
+        "*.lot",
+        "*.out",
+        "*.toc",
+        "*.acn",
+        "*.acr",
+        "*.alg",
+        "*.glg",
+        "*.glo",
+        "*.gls",
+        "*.fls",
+        "*.log",
+        "*.fdb_latexmk",
+        "*.snm",
+        "*.synctex(busy)",
+        "*.synctex.gz(busy)",
+        "*.nav"
+    ]
+}
